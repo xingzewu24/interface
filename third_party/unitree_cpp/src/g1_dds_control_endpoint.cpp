@@ -489,16 +489,6 @@ void G1DdsControlEndpoint::set_gains(const std::vector<double>& stiffness, const
         }
         stiffness_ = stiffness;
         damping_ = damping;
-
-        std::cout << "Gains set: stiffness = [";
-        for (const auto& s : stiffness_) {
-            std::cout << s << " ";
-        }
-        std::cout << "], damping = [";
-        for (const auto& d : damping_) {
-            std::cout << d << " ";
-        }
-        std::cout << "]" << std::endl;
     });
 }
 
