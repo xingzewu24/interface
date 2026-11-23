@@ -7,6 +7,8 @@ KEYBOARD_AXES = ("LeftX", "LeftY", "RightX", "RightY", "LT", "RT")
 
 
 class KeyboardCtrl(Controller):
+    THREAD_CLASS = KeyboardThread
+
     def __init__(
         self,
         env=None,
@@ -18,7 +20,7 @@ class KeyboardCtrl(Controller):
     ):
         super().__init__(KEYBOARD_AXES)
         self.stale_timeout = float(stale_timeout)
-        self.keyboard_thread = KeyboardThread(
+        self.keyboard_thread = self.THREAD_CLASS(
             self.state_queue,
             self.event_queue,
             KEYBOARD_AXES,

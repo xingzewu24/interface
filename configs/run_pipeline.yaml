@@ -1,10 +1,30 @@
 defaults:
   - robot: g1
   - policy: leggedlab_g1
+  - policy@track: track
+  - policy@metatron: metatron
   - deployment: sim
   - override hydra/job_logging: disabled
   - override hydra/hydra_logging: disabled
   - _self_
+
+track:
+  enabled: false
+  allow_real: false
+  transition_seconds: 2.0
+  settle_seconds: 0.35
+  settle_timeout_seconds: 3.0
+  max_switch_speed: 0.25  # m/s below which a handoff can begin
+
+metatron:
+  enabled: false
+  allow_real: false
+  transition_seconds: 0.6
+  settle_seconds: 0.35
+  settle_timeout_seconds: 3.0
+  max_switch_speed: 0.25  # m/s below which a handoff can begin
+  steer_speed_limit: 0.6  # m/s
+  steer_yaw_rate_limit: 0.6  # rad/s
 
 recording:
   enabled: false

@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
 
 import numpy as np
 
+Observation = TypeVar("Observation")
 
-class BasePolicy(ABC):
+
+class BasePolicy(ABC, Generic[Observation]):
     FREQ: int
 
     def __init__(self):
@@ -15,11 +18,11 @@ class BasePolicy(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_observation(self, env_data, control_data) -> np.ndarray:
+    def get_observation(self, env_data, control_data) -> Observation:
         raise NotImplementedError
 
     @abstractmethod
-    def get_action(self, observation: np.ndarray) -> np.ndarray:
+    def get_action(self, observation: Observation) -> np.ndarray:
         raise NotImplementedError
 
     @abstractmethod

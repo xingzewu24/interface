@@ -11,9 +11,10 @@ class Controller:
         self.event_queue = Queue(maxsize=100)
         self._axes_names = tuple(axes_names)
         self._last_axes = {name: 0.0 for name in self._axes_names}
+        self.pressed_buttons: frozenset[str] = frozenset()
 
     def read(self) -> tuple[dict, bool]:
-        """Return the latest axes and whether an A-button press requested shutdown."""
+        """Return axes and shutdown status, and refresh the other press edges."""
 
         while True:
             try:
@@ -22,13 +23,14 @@ class Controller:
                 break
             self._last_axes = state["axes"].copy()
 
-        shutdown_requested = False
+        pressed_buttons = set()
         while True:
             try:
                 event = self.event_queue.get_nowait()
             except Empty:
                 break
-            if event["type"] == "button" and event["name"] == SHUTDOWN_BUTTON and event["pressed"]:
-                shutdown_requested = True
+            if event["type"] == "button" and event["pressed"]:
+                pressed_buttons.add(event["name"])
 
-        return {"axes": self._last_axes.copy()}, shutdown_requested
+        self.pressed_buttons = frozenset(pressed_buttons - {SHUTDOWN_BUTTON})
+        return {"axes": self._last_axes.copy()}, SHUTDOWN_BUTTON in pressed_buttons

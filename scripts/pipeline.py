@@ -54,11 +54,17 @@ def run(cfg: DictConfig) -> None:
     setup_logger()
     env = None
     log = None
+    switching = None
     try:
         dof = compose_dof_config(cfg.robot.dof, cfg.policy.dof)
-        policy = LeggedLabPolicy(cfg.policy, dof_cfg=dof)
+        controller_cfg = cfg.controller
+        if any(cfg.get(name, {}).get("enabled", False) for name in ("track", "metatron")):
+            from g1_playground.policy_handoff import setup_handoff
+
+            switching, controller_cfg = setup_handoff(cfg, dof)
+        policy = switching.loco if switching is not None else LeggedLabPolicy(cfg.policy, dof_cfg=dof)
         env = instantiate(cfg.env, dof_cfg=dof, control_dt=policy.dt)
-        controller = instantiate(cfg.controller, env=env)
+        controller = instantiate(controller_cfg, env=env)
         if cfg.recording.enabled:
             log = recorder(int(cfg.recording.seconds * policy.freq))
 
@@ -71,6 +77,8 @@ def run(cfg: DictConfig) -> None:
         if frame is None:
             return
         state, _ = frame
+        if switching is not None:
+            switching.warmup(state, env.read_odometry())
         initial = state.dof_pos
         standing = policy.standing_target
         env.activate_commands()
@@ -98,9 +106,15 @@ def run(cfg: DictConfig) -> None:
             if frame is None:
                 break
             state, control = frame
-            target = policy.act(state, control)
-            env.step(target)
-            record(log, started - origin, state, target, env.read_odometry())
+            if switching is None:
+                target = policy.act(state, control)
+                env.step(target)
+                odometry = env.read_odometry()
+            else:
+                odometry = env.read_odometry()
+                control.setdefault("buttons", getattr(controller, "pressed_buttons", ()))
+                target = switching.step(env, state, odometry, control, started - origin).target
+            record(log, started - origin, state, target, odometry)
             remaining = policy.dt - (time.monotonic() - started)
             if remaining > 0:
                 time.sleep(remaining)
@@ -112,10 +126,14 @@ def run(cfg: DictConfig) -> None:
     except KeyboardInterrupt:
         logger.info("Interrupted by operator")
     finally:
-        if log is not None:
-            save_recording(log, cfg.recording.directory, OmegaConf.to_yaml(cfg, resolve=True))
-        if env is not None:
-            env.shutdown()
+        try:
+            if env is not None:
+                env.shutdown()
+        finally:
+            if switching is not None:
+                switching.close()
+            if log is not None:
+                save_recording(log, cfg.recording.directory, OmegaConf.to_yaml(cfg, resolve=True))
 
 
 if __name__ == "__main__":

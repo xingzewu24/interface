@@ -1,0 +1,3 @@
+contract: assets/models/metatron/unified_pipeline.yaml
+model: null  # Defaults to the .onnx next to the export YAML.
+fk_xml: assets/robots/g1/g1_metatron.xml

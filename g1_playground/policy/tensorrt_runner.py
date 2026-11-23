@@ -160,18 +160,21 @@ def _model_digest(model_path: Path) -> str:
 
 
 class TensorRTRunner:
-    def __init__(self, model_path):
+    def __init__(self, model_path, *, input_shapes: dict[str, tuple[int, ...]] | None = None):
         self.model_path = Path(model_path).resolve()
         if self.model_path.suffix != ".onnx" or not self.model_path.is_file():
             raise ValueError(f"TensorRT requires an ONNX model, got {self.model_path}")
 
         self.cuda = _CudaRuntime()
         self.trt = _load_tensorrt()
+        self.input_shapes = {} if input_shapes is None else dict(input_shapes)
         major, minor = self.cuda.compute_capability()
-        cache_name = (
-            f"{self.model_path.stem}-{_model_digest(self.model_path)}-"
-            f"trt{self.trt.__version__}-{platform.machine()}-sm{major}{minor}.engine"
-        )
+        model_key = _model_digest(self.model_path)
+        if self.input_shapes:
+            shape_key = hashlib.sha256(repr(sorted(self.input_shapes.items())).encode()).hexdigest()[:16]
+            model_key = f"{model_key}-{shape_key}"
+        platform_key = f"trt{self.trt.__version__}-{platform.machine()}-sm{major}{minor}"
+        cache_name = f"{self.model_path.stem}-{model_key}-{platform_key}.engine"
         self.engine_path = CACHE_DIR / cache_name
         self.trt_logger = self.trt.Logger(self.trt.Logger.ERROR)
         self.runtime = self.trt.Runtime(self.trt_logger)
@@ -230,6 +233,8 @@ class TensorRTRunner:
         if not parser.parse_from_file(str(self.model_path)):
             errors = "\n".join(str(parser.get_error(index)) for index in range(parser.num_errors))
             raise RuntimeError(f"TensorRT could not parse {self.model_path}:\n{errors}")
+        if self.input_shapes:
+            self._set_input_shapes(network)
         config = builder.create_builder_config()
         config.clear_flag(self.trt.BuilderFlag.TF32)
         plan = builder.build_serialized_network(network, config)
@@ -245,8 +250,25 @@ class TensorRTRunner:
         logger.info("Built TensorRT engine %s in %.2f s", self.engine_path, time.monotonic() - started)
         return engine
 
+    def _set_input_shapes(self, network) -> None:
+        inputs = {tensor.name: tensor for tensor in (network.get_input(i) for i in range(network.num_inputs))}
+        if self.input_shapes.keys() != inputs.keys():
+            raise ValueError(f"TensorRT input names differ from the requested shapes for {self.model_path}")
+        for name, shape in self.input_shapes.items():
+            tensor = inputs[name]
+            if len(shape) != len(tensor.shape) or any(
+                requested <= 0 or declared not in (-1, requested)
+                for declared, requested in zip(tensor.shape, shape, strict=True)
+            ):
+                raise ValueError(f"TensorRT input {name} has shape {tensor.shape}, cannot use {shape}")
+            # Resolve symbolic dimensions before the engine allocates fixed I/O buffers.
+            tensor.shape = shape
+
     def shape(self, name: str) -> tuple[int, ...]:
         return self.shapes[name]
+
+    def dtype(self, name: str) -> np.dtype:
+        return self.host_buffers[name].dtype
 
     def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         if set(inputs) != set(self.input_names):

@@ -22,8 +22,8 @@ control, shutdown_requested = controller.read()
 ```
 
 The newest axis sample is retained. All pending button edges are consumed, and any pressed `A` edge makes the boolean
-true for that read. The launcher checks it before policy inference and before the next target write. There is no command
-list, trigger registry, controller manager, or post-step callback.
+true for that read. The launcher checks it before policy inference and before the next target write. Other press edges
+are available in `controller.pressed_buttons` for that frame.
 
 The policy consumes three normalized axes:
 
@@ -47,6 +47,26 @@ python scripts/pipeline.py deployment=sim
 
 Up/Down controls longitudinal motion, Left/Right controls yaw, and Shift+Left/Right controls lateral motion.
 Escape requests software shutdown.
+
+## Policy switches
+
+Enable Track with `track.enabled=true` and Metatron with `metatron.enabled=true`. The client starts in LeggedLab and
+returns to it on request. Each handoff waits for the robot to settle. Metatron warms up while the current policy
+keeps control. During the crossfade, both policies use live robot state to compute targets and the client sends one
+blended command per tick. Press edges received during a gain transition are ignored.
+
+| Action | Simulation keyboard | Unitree remote |
+| --- | --- | --- |
+| Enter Track | `t` | `L1` |
+| Enter Metatron | `[` | `X` |
+| Return to LeggedLab | `]` | `B` |
+| Metatron `idle` | `i` | `Y` |
+| Metatron `steer` | `k` | `R1` |
+
+The real deployment requires an explicit `track.allow_real=true` or `metatron.allow_real=true` for each enabled handoff,
+after checking the target robot's odometry and gains.
+
+See the [Track and Metatron TODO](../TODO.md#track-and-metatron) for follow-up work.
 
 ## UnitreeCtrl
 

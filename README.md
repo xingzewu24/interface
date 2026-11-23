@@ -38,6 +38,27 @@ python scripts/pipeline.py deployment=sim
 Use Up/Down for forward/backward motion, Left/Right for yaw, and Shift+Left/Right for lateral motion. Escape requests
 software shutdown.
 
+## Switch Policies in MuJoCo
+
+Start the simulator as above. To run LeggedLab and Track in the same policy client:
+
+```bash
+python -m scripts.pipeline deployment=sim track.enabled=true
+```
+
+Metatron uses the same TensorRT installation as LeggedLab and Track. Git LFS stores its ONNX model. After installing
+Git LFS, fetch the model and start all three policies. TensorRT builds and caches the engine on the first run.
+
+```bash
+git lfs pull --include="assets/models/metatron/unified_pipeline.onnx"
+python -m scripts.pipeline deployment=sim track.enabled=true metatron.enabled=true
+```
+
+The client starts in LeggedLab. Press **t** for Track, **[** for Metatron, and **]** for LeggedLab. When both are enabled,
+the same keys also switch directly between Track and Metatron. Track holds its standing reference, aligned to the heading
+at entry. Metatron enters `stand`. Press **i** for `idle` or **k** for `steer`. Escape requests software shutdown.
+[Controller mappings](docs/controller.md)
+
 ## Synchronize the G1
 
 Run synchronization from the workstation repository root. Without `--apply`, the command is a dry run:
@@ -99,7 +120,7 @@ The hardware-free tests cover locomotion joint ordering, MuJoCo support timing, 
 - `configs/run_pipeline.yaml` defines the locomotion pipeline.
 - `configs/deployment/` defines DDS and input settings for simulation and hardware.
 - `configs/policy/leggedlab_g1.yaml` configures the bundled LeggedLab ONNX model.
-- `configs/policy/track.yaml` configures the bundled Track model for Python callers.
+- `configs/policy/track.yaml` configures the bundled Track model for standalone use and policy handoffs.
   [Track policy implementation](g1_playground/policy/track/track_policy.py)
 
 ## Safety

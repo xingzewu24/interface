@@ -1,0 +1,659 @@
+schema: unified_pipeline/1
+type: unified_pipeline
+dt: 0.02
+joint_names: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+  left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+  right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+  left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+  left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+  right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+  right_wrist_yaw_joint]
+body_names: [pelvis, head, left_hip_pitch_link, left_hip_roll_link, left_hip_yaw_link,
+  left_knee_link, left_ankle_pitch_link, left_ankle_roll_link, right_hip_pitch_link,
+  right_hip_roll_link, right_hip_yaw_link, right_knee_link, right_ankle_pitch_link,
+  right_ankle_roll_link, waist_yaw_link, waist_roll_link, torso_link, left_shoulder_pitch_link,
+  left_shoulder_roll_link, left_shoulder_yaw_link, left_elbow_link, left_wrist_roll_link,
+  left_wrist_pitch_link, left_wrist_yaw_link, left_rubber_hand, right_shoulder_pitch_link,
+  right_shoulder_roll_link, right_shoulder_yaw_link, right_elbow_link, right_wrist_roll_link,
+  right_wrist_pitch_link, right_wrist_yaw_link, right_rubber_hand]
+default_joint_stiffness: [40.17923847137318, 99.09842777666113, 40.17923847137318,
+  99.09842777666113, 28.50124619574858, 28.50124619574858, 40.17923847137318, 99.09842777666113,
+  40.17923847137318, 99.09842777666113, 28.50124619574858, 28.50124619574858, 40.17923847137318,
+  28.50124619574858, 28.50124619574858, 14.25062309787429, 14.25062309787429, 14.25062309787429,
+  14.25062309787429, 14.25062309787429, 16.77832748089279, 16.77832748089279, 14.25062309787429,
+  14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 16.77832748089279,
+  16.77832748089279]
+default_joint_damping: [2.5578897650279457, 6.3088018534966395, 2.5578897650279457,
+  6.3088018534966395, 1.814445686584846, 1.814445686584846, 2.5578897650279457, 6.3088018534966395,
+  2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846, 2.5578897650279457,
+  1.814445686584846, 1.814445686584846, 0.907222843292423, 0.907222843292423, 0.907222843292423,
+  0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219, 0.907222843292423,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219,
+  1.06814150219]
+policy_inputs:
+- name: current_action
+  key: current_action
+  shape: [1, 29]
+  kind: last_actions
+  provider: policy_history
+  source_namespace: current_action
+  dtype: float32
+  output_key: actions
+  history: 1
+  first_action_lag: 1
+  steps_back: [1]
+  fill_before_available: zeros
+  source: The applied command in the graph's actions coordinate system. Feed back
+    any deploy-side edit, not the rejected network prediction. Slot i holds the values
+    from steps_back[i] policy calls ago; until that many calls have run since a reset,
+    it holds fill_before_available.
+  reset_value: 0.0
+- name: masked_mimic_anchor_rotation_mask
+  key: masked_mimic.anchor_rotation_mask
+  shape: [1, 5, 2]
+  kind: masked_mimic_anchor_rotation_mask
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  future_steps: 5
+  source: Per-step anchor visibility for [full rotation, heading]; true means conditioned.
+- name: masked_mimic_anchor_translation_mask
+  key: masked_mimic.anchor_translation_mask
+  shape: [1, 5, 2]
+  kind: masked_mimic_anchor_translation_mask
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  future_steps: 5
+  source: Per-step anchor visibility for [XY, Z]; true means conditioned.
+- name: masked_mimic_average_velocity
+  key: masked_mimic.average_velocity
+  shape: [1, 2]
+  kind: masked_mimic_average_velocity
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  element_names:
+  - [x, y]
+  source: World-frame anchor XY velocity command in m/s.
+- name: masked_mimic_local_ref_pos
+  key: masked_mimic.local_ref_pos
+  shape: [1, 5, 33, 3]
+  kind: masked_mimic_local_ref_pos
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  element_names:
+  - [pelvis, head, left_hip_pitch_link, left_hip_roll_link, left_hip_yaw_link, left_knee_link,
+    left_ankle_pitch_link, left_ankle_roll_link, right_hip_pitch_link, right_hip_roll_link,
+    right_hip_yaw_link, right_knee_link, right_ankle_pitch_link, right_ankle_roll_link,
+    waist_yaw_link, waist_roll_link, torso_link, left_shoulder_pitch_link, left_shoulder_roll_link,
+    left_shoulder_yaw_link, left_elbow_link, left_wrist_roll_link, left_wrist_pitch_link,
+    left_wrist_yaw_link, left_rubber_hand, right_shoulder_pitch_link, right_shoulder_roll_link,
+    right_shoulder_yaw_link, right_elbow_link, right_wrist_roll_link, right_wrist_pitch_link,
+    right_wrist_yaw_link, right_rubber_hand]
+  - [x, y, z]
+  future_steps: 5
+  source: Raw body targets in metres; anchor-relative conversion happens inside the
+    graph, not on the host.
+- name: masked_mimic_local_ref_rot
+  key: masked_mimic.local_ref_rot
+  shape: [1, 5, 33, 4]
+  kind: masked_mimic_local_ref_rot
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  element_names:
+  - [pelvis, head, left_hip_pitch_link, left_hip_roll_link, left_hip_yaw_link, left_knee_link,
+    left_ankle_pitch_link, left_ankle_roll_link, right_hip_pitch_link, right_hip_roll_link,
+    right_hip_yaw_link, right_knee_link, right_ankle_pitch_link, right_ankle_roll_link,
+    waist_yaw_link, waist_roll_link, torso_link, left_shoulder_pitch_link, left_shoulder_roll_link,
+    left_shoulder_yaw_link, left_elbow_link, left_wrist_roll_link, left_wrist_pitch_link,
+    left_wrist_yaw_link, left_rubber_hand, right_shoulder_pitch_link, right_shoulder_roll_link,
+    right_shoulder_yaw_link, right_elbow_link, right_wrist_roll_link, right_wrist_pitch_link,
+    right_wrist_yaw_link, right_rubber_hand]
+  - [x, y, z, w]
+  future_steps: 5
+  source: Raw xyzw body targets; the graph removes target-anchor heading, not the
+    host.
+- name: masked_mimic_local_target_bodies_masks
+  key: masked_mimic.local_target_bodies_masks
+  shape: [1, 50]
+  kind: masked_mimic_local_target_bodies_masks
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  future_steps: 5
+  source: Flattened [step, conditionable_body, translation/rotation] local visibility;
+    true means conditioned.
+- name: masked_mimic_local_target_poses_masks
+  key: masked_mimic.local_target_poses_masks
+  shape: [1, 5]
+  kind: masked_mimic_local_target_poses_masks
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  future_steps: 5
+  source: Boolean per-local-target-step visibility; true means conditioned.
+- name: masked_mimic_local_time_offsets
+  key: masked_mimic.local_time_offsets
+  shape: [1, 5]
+  kind: masked_mimic_local_time_offsets
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  future_steps: 5
+  source: Seconds from the current policy call to each local goal.
+- name: masked_mimic_ref_pos
+  key: masked_mimic.ref_pos
+  shape: [1, 5, 33, 3]
+  kind: masked_mimic_ref_pos
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  element_names:
+  - [pelvis, head, left_hip_pitch_link, left_hip_roll_link, left_hip_yaw_link, left_knee_link,
+    left_ankle_pitch_link, left_ankle_roll_link, right_hip_pitch_link, right_hip_roll_link,
+    right_hip_yaw_link, right_knee_link, right_ankle_pitch_link, right_ankle_roll_link,
+    waist_yaw_link, waist_roll_link, torso_link, left_shoulder_pitch_link, left_shoulder_roll_link,
+    left_shoulder_yaw_link, left_elbow_link, left_wrist_roll_link, left_wrist_pitch_link,
+    left_wrist_yaw_link, left_rubber_hand, right_shoulder_pitch_link, right_shoulder_roll_link,
+    right_shoulder_yaw_link, right_elbow_link, right_wrist_roll_link, right_wrist_pitch_link,
+    right_wrist_yaw_link, right_rubber_hand]
+  - [x, y, z]
+  future_steps: 5
+  source: Body targets in metres in the host localization frame; full published body
+    order.
+- name: masked_mimic_ref_rot
+  key: masked_mimic.ref_rot
+  shape: [1, 5, 33, 4]
+  kind: masked_mimic_ref_rot
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  element_names:
+  - [pelvis, head, left_hip_pitch_link, left_hip_roll_link, left_hip_yaw_link, left_knee_link,
+    left_ankle_pitch_link, left_ankle_roll_link, right_hip_pitch_link, right_hip_roll_link,
+    right_hip_yaw_link, right_knee_link, right_ankle_pitch_link, right_ankle_roll_link,
+    waist_yaw_link, waist_roll_link, torso_link, left_shoulder_pitch_link, left_shoulder_roll_link,
+    left_shoulder_yaw_link, left_elbow_link, left_wrist_roll_link, left_wrist_pitch_link,
+    left_wrist_yaw_link, left_rubber_hand, right_shoulder_pitch_link, right_shoulder_roll_link,
+    right_shoulder_yaw_link, right_elbow_link, right_wrist_roll_link, right_wrist_pitch_link,
+    right_wrist_yaw_link, right_rubber_hand]
+  - [x, y, z, w]
+  future_steps: 5
+  source: Body target orientations as xyzw unit quaternions in the host localization
+    frame.
+- name: masked_mimic_style_condition_masks
+  key: masked_mimic.style_condition_masks
+  shape: [1, 5, 11]
+  kind: masked_mimic_style_condition_masks
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  source: Per-conditionable-body style visibility; true means conditioned.
+- name: masked_mimic_style_frame_masks
+  key: masked_mimic.style_frame_masks
+  shape: [1, 5]
+  kind: masked_mimic_style_frame_masks
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  source: Per-style-frame visibility; true means conditioned.
+- name: masked_mimic_style_pose_samples
+  key: masked_mimic.style_pose_samples
+  shape: [1, 225]
+  kind: masked_mimic_style_pose_samples
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  source: 'Flattened [frame, conditionable_body, 9]: anchor-relative position (metres)
+    and tangent/normal rotation features, using each style frame''s own heading.'
+- name: masked_mimic_style_velocity_samples
+  key: masked_mimic.style_velocity_samples
+  shape: [1, 150]
+  kind: masked_mimic_style_velocity_samples
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  source: 'Flattened [frame, conditionable_body, 6]: linear velocity (m/s) and angular
+    velocity (rad/s), in each style frame''s anchor-heading frame.'
+- name: masked_mimic_target_bodies_masks
+  key: masked_mimic.target_bodies_masks
+  shape: [1, 50]
+  kind: masked_mimic_target_bodies_masks
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  future_steps: 5
+  source: Flattened [step, conditionable_body, translation/rotation] visibility; true
+    means conditioned.
+- name: masked_mimic_target_poses_masks
+  key: masked_mimic.target_poses_masks
+  shape: [1, 5]
+  kind: masked_mimic_target_poses_masks
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  future_steps: 5
+  source: Boolean per-target-step visibility; true means conditioned.
+- name: masked_mimic_time_offsets
+  key: masked_mimic.time_offsets
+  shape: [1, 5]
+  kind: masked_mimic_time_offsets
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: float32
+  future_steps: 5
+  source: Seconds from the current policy call to each goal; not absolute timestamps.
+- name: masked_mimic_velocity_command_mask
+  key: masked_mimic.velocity_command_mask
+  shape: [1, 1]
+  kind: masked_mimic_velocity_command_mask
+  provider: masked_mimic
+  source_namespace: masked_mimic
+  dtype: bool
+  source: Velocity-command visibility; true means conditioned.
+- name: noisy_anchor_pos
+  key: noisy.anchor_pos
+  shape: [1, 3]
+  kind: anchor_pos
+  provider: localization
+  source_namespace: noisy
+  dtype: float32
+  element_names:
+  - [x, y, z]
+  source: Robot anchor position in the deployment world frame. This needs a position
+    estimate on the robot; prefer observations that read only the anchor rotation
+    if you do not have one.
+- name: noisy_anchor_rot
+  key: noisy.anchor_rot
+  shape: [1, 4]
+  kind: anchor_rot
+  provider: imu
+  source_namespace: noisy
+  dtype: float32
+  element_names:
+  - [x, y, z, w]
+- name: noisy_dof_pos
+  key: noisy.dof_pos
+  shape: [1, 29]
+  kind: joint_pos
+  provider: joint_encoders
+  source_namespace: noisy
+  dtype: float32
+  element_names:
+  - [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+- name: noisy_dof_vel
+  key: noisy.dof_vel
+  shape: [1, 29]
+  kind: joint_vel
+  provider: joint_encoders
+  source_namespace: noisy
+  dtype: float32
+  element_names:
+  - [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+- name: noisy_root_local_ang_vel
+  key: noisy.root_local_ang_vel
+  shape: [1, 3]
+  kind: local_root_ang_vel
+  provider: imu
+  source_namespace: noisy
+  dtype: float32
+- name: noisy_historical_anchor_rot
+  key: noisy_historical.anchor_rot
+  shape: [1, 8, 4]
+  kind: anchor_rot
+  provider: imu
+  source_namespace: noisy_historical
+  dtype: float32
+  element_names:
+  - [x, y, z, w]
+  observation_history:
+    current_key: noisy.anchor_rot
+    steps_back: [1, 2, 3, 4, 5, 6, 7, 8]
+    reset_fill: initial_measurement
+- name: noisy_historical_dof_pos
+  key: noisy_historical.dof_pos
+  shape: [1, 8, 29]
+  kind: joint_pos
+  provider: joint_encoders
+  source_namespace: noisy_historical
+  dtype: float32
+  element_names:
+  - [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+  observation_history:
+    current_key: noisy.dof_pos
+    steps_back: [1, 2, 3, 4, 5, 6, 7, 8]
+    reset_fill: initial_measurement
+- name: noisy_historical_dof_vel
+  key: noisy_historical.dof_vel
+  shape: [1, 8, 29]
+  kind: joint_vel
+  provider: joint_encoders
+  source_namespace: noisy_historical
+  dtype: float32
+  element_names:
+  - [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+  observation_history:
+    current_key: noisy.dof_vel
+    steps_back: [1, 2, 3, 4, 5, 6, 7, 8]
+    reset_fill: initial_measurement
+- name: noisy_historical_raw_actions
+  key: noisy_historical.raw_actions
+  shape: [1, 8, 29]
+  kind: last_actions
+  provider: policy_history
+  source_namespace: noisy_historical
+  dtype: float32
+  output_key: actions
+  history: 8
+  first_action_lag: 2
+  steps_back: [2, 3, 4, 5, 6, 7, 8, 9]
+  fill_before_available: zeros
+  source: The applied command in the graph's actions coordinate system. Feed back
+    any deploy-side edit, not the rejected network prediction. Slot i holds the values
+    from steps_back[i] policy calls ago; until that many calls have run since a reset,
+    it holds fill_before_available.
+  reset_value: 0.0
+- name: noisy_historical_root_local_ang_vel
+  key: noisy_historical.root_local_ang_vel
+  shape: [1, 8, 3]
+  kind: local_root_ang_vel
+  provider: imu
+  source_namespace: noisy_historical
+  dtype: float32
+  observation_history:
+    current_key: noisy.root_local_ang_vel
+    steps_back: [1, 2, 3, 4, 5, 6, 7, 8]
+    reset_fill: initial_measurement
+- name: scene_boxes_centers
+  key: scene_boxes.centers
+  shape: [1, 1, 2, 3]
+  kind: scene_box_centers
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: float32
+  element_names:
+  - [x, y, z]
+  source: Box centres in metres in each object's own frame, [object, box, xyz], asset
+    scale included; any value for a padding box.
+- name: scene_boxes_extents
+  key: scene_boxes.extents
+  shape: [1, 1, 2, 3]
+  kind: scene_box_extents
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: float32
+  element_names:
+  - [x, y, z]
+  source: Full box side lengths in metres in each object's own frame, [object, box,
+    xyz], asset scale included; any value for a padding box.
+- name: scene_boxes_object_pos
+  key: scene_boxes.object_pos
+  shape: [1, 1, 3]
+  kind: scene_object_pos
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: float32
+  element_names:
+  - [x, y, z]
+  source: Object origin in metres in the host localization frame, [object, xyz]; the
+    same frame as the robot's anchor position.
+- name: scene_boxes_object_rot
+  key: scene_boxes.object_rot
+  shape: [1, 1, 4]
+  kind: scene_object_rot
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: float32
+  element_names:
+  - [x, y, z, w]
+  source: Object orientation as an xyzw unit quaternion in the host localization frame,
+    [object, xyzw].
+- name: scene_boxes_position_offset
+  key: scene_boxes.position_offset
+  shape: [1, 3]
+  kind: scene_position_offset
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: float32
+  element_names:
+  - [x, y, z]
+  source: Bias added to every observed object position, metres, xyz; a training perturbation
+    of the observed pose. Feed zeros.
+- name: scene_boxes_valid
+  key: scene_boxes.valid
+  shape: [1, 1, 2]
+  kind: scene_box_valid
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: bool
+  source: 'Boolean [object, box]: the box exists; false for padding slots, whose geometry
+    and pose are ignored.'
+- name: scene_boxes_visible
+  key: scene_boxes.visible
+  shape: [1, 1, 1]
+  kind: scene_object_visible
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: bool
+  source: 'Boolean [object, 1]: the object is shown to the policy; false hides every
+    box of the object.'
+- name: scene_boxes_yaw_offset
+  key: scene_boxes.yaw_offset
+  shape: [1]
+  kind: scene_yaw_offset
+  provider: scene
+  source_namespace: scene_boxes
+  dtype: float32
+  source: Yaw bias in radians composed onto every observed object orientation; a training
+    perturbation of the observed pose. Feed zero.
+policy_outputs:
+- name: actions
+  kind: actions
+  key: actions
+  shape: [1, 29]
+- name: joint_pos_targets
+  kind: joint_pos_targets
+  key: joint_pos_targets
+  shape: [1, 29]
+  joint_names: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+- name: stiffness_targets
+  kind: stiffness_targets
+  key: stiffness_targets
+  shape: [1, 29]
+  joint_names: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+- name: damping_targets
+  kind: damping_targets
+  key: damping_targets
+  shape: [1, 29]
+  joint_names: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+_runtime:
+  onnx_in_names: [current_action, masked_mimic_anchor_rotation_mask, masked_mimic_anchor_translation_mask,
+    masked_mimic_average_velocity, masked_mimic_local_ref_pos, masked_mimic_local_ref_rot,
+    masked_mimic_local_target_bodies_masks, masked_mimic_local_target_poses_masks,
+    masked_mimic_local_time_offsets, masked_mimic_ref_pos, masked_mimic_ref_rot, masked_mimic_style_condition_masks,
+    masked_mimic_style_frame_masks, masked_mimic_style_pose_samples, masked_mimic_style_velocity_samples,
+    masked_mimic_target_bodies_masks, masked_mimic_target_poses_masks, masked_mimic_time_offsets,
+    masked_mimic_velocity_command_mask, noisy_anchor_pos, noisy_anchor_rot, noisy_dof_pos,
+    noisy_dof_vel, noisy_root_local_ang_vel, noisy_historical_anchor_rot, noisy_historical_dof_pos,
+    noisy_historical_dof_vel, noisy_historical_raw_actions, noisy_historical_root_local_ang_vel,
+    scene_boxes_centers, scene_boxes_extents, scene_boxes_object_pos, scene_boxes_object_rot,
+    scene_boxes_position_offset, scene_boxes_valid, scene_boxes_visible, scene_boxes_yaw_offset]
+  onnx_out_names: [actions, joint_pos_targets, stiffness_targets, damping_targets]
+  onnx_name_to_in_key: {current_action: current_action, masked_mimic_anchor_rotation_mask: masked_mimic.anchor_rotation_mask,
+    masked_mimic_anchor_translation_mask: masked_mimic.anchor_translation_mask, masked_mimic_average_velocity: masked_mimic.average_velocity,
+    masked_mimic_local_ref_pos: masked_mimic.local_ref_pos, masked_mimic_local_ref_rot: masked_mimic.local_ref_rot,
+    masked_mimic_local_target_bodies_masks: masked_mimic.local_target_bodies_masks,
+    masked_mimic_local_target_poses_masks: masked_mimic.local_target_poses_masks,
+    masked_mimic_local_time_offsets: masked_mimic.local_time_offsets, masked_mimic_ref_pos: masked_mimic.ref_pos,
+    masked_mimic_ref_rot: masked_mimic.ref_rot, masked_mimic_style_condition_masks: masked_mimic.style_condition_masks,
+    masked_mimic_style_frame_masks: masked_mimic.style_frame_masks, masked_mimic_style_pose_samples: masked_mimic.style_pose_samples,
+    masked_mimic_style_velocity_samples: masked_mimic.style_velocity_samples, masked_mimic_target_bodies_masks: masked_mimic.target_bodies_masks,
+    masked_mimic_target_poses_masks: masked_mimic.target_poses_masks, masked_mimic_time_offsets: masked_mimic.time_offsets,
+    masked_mimic_velocity_command_mask: masked_mimic.velocity_command_mask, noisy_anchor_pos: noisy.anchor_pos,
+    noisy_anchor_rot: noisy.anchor_rot, noisy_dof_pos: noisy.dof_pos, noisy_dof_vel: noisy.dof_vel,
+    noisy_root_local_ang_vel: noisy.root_local_ang_vel, noisy_historical_anchor_rot: noisy_historical.anchor_rot,
+    noisy_historical_dof_pos: noisy_historical.dof_pos, noisy_historical_dof_vel: noisy_historical.dof_vel,
+    noisy_historical_raw_actions: noisy_historical.raw_actions, noisy_historical_root_local_ang_vel: noisy_historical.root_local_ang_vel,
+    scene_boxes_centers: scene_boxes.centers, scene_boxes_extents: scene_boxes.extents,
+    scene_boxes_object_pos: scene_boxes.object_pos, scene_boxes_object_rot: scene_boxes.object_rot,
+    scene_boxes_position_offset: scene_boxes.position_offset, scene_boxes_valid: scene_boxes.valid,
+    scene_boxes_visible: scene_boxes.visible, scene_boxes_yaw_offset: scene_boxes.yaw_offset}
+  passthrough_keys: []
+  obs_context_keys: [current_action, masked_mimic.anchor_rotation_mask, masked_mimic.anchor_translation_mask,
+    masked_mimic.average_velocity, masked_mimic.local_ref_pos, masked_mimic.local_ref_rot,
+    masked_mimic.local_target_bodies_masks, masked_mimic.local_target_poses_masks,
+    masked_mimic.local_time_offsets, masked_mimic.ref_pos, masked_mimic.ref_rot, masked_mimic.style_condition_masks,
+    masked_mimic.style_frame_masks, masked_mimic.style_pose_samples, masked_mimic.style_velocity_samples,
+    masked_mimic.target_bodies_masks, masked_mimic.target_poses_masks, masked_mimic.time_offsets,
+    masked_mimic.velocity_command_mask, noisy.anchor_pos, noisy.anchor_rot, noisy.dof_pos,
+    noisy.dof_vel, noisy.root_local_ang_vel, noisy_historical.anchor_rot, noisy_historical.dof_pos,
+    noisy_historical.dof_vel, noisy_historical.raw_actions, noisy_historical.root_local_ang_vel,
+    scene_boxes.centers, scene_boxes.extents, scene_boxes.object_pos, scene_boxes.object_rot,
+    scene_boxes.position_offset, scene_boxes.valid, scene_boxes.visible, scene_boxes.yaw_offset]
+metadata: {checkpoint: data/pretrained_models/metatron/G1/inference_last.ckpt, control_type: BUILT_IN_PD,
+  onnx_sha256: 55286caf6659fb86660cd0a6284f4b80877e130270f786a58fff8e813ef34a78}
+sensors:
+  imu:
+    body_name: pelvis
+    body_index: 0
+    mount_sensor_to_body_xyzw: [0.0, 0.0, 0.0, 1.0]
+    orientation_frame: world
+    gyro_frame: sensor
+  anchor_body_name: torso_link
+  localization:
+    body_name: pelvis
+    body_index: 0
+    offset_body_xyz: [0.0, 0.0, 0.0]
+    position_frame: world
+  base_velocity: null
+  height: null
+  schema: physical-sensors/v1
+  joint_coordinates: scalar_hinge
+  w_last: true
+  history_initialization: repeat_first_reading
+masked_mimic:
+  future_steps: [1, 2, 5, 7, 12, 18, 25]
+  num_masked_future_steps: 5
+  conditionable_bodies: [torso_link, right_ankle_roll_link, left_ankle_roll_link,
+    left_rubber_hand, right_rubber_hand]
+  anchor_body: torso_link
+  anchor_pose_submasking: true
+  has_local_stream: true
+  style_frames: 5
+  has_velocity_command: true
+robot:
+  mjcf_path: mjcf/g1_holo_compat.xml
+  num_bodies: 33
+  num_dofs: 29
+  anchor_body_name: torso_link
+  anchor_body_index: 16
+  root_body_name: pelvis
+  root_body_index: 0
+  body_names: [pelvis, head, left_hip_pitch_link, left_hip_roll_link, left_hip_yaw_link,
+    left_knee_link, left_ankle_pitch_link, left_ankle_roll_link, right_hip_pitch_link,
+    right_hip_roll_link, right_hip_yaw_link, right_knee_link, right_ankle_pitch_link,
+    right_ankle_roll_link, waist_yaw_link, waist_roll_link, torso_link, left_shoulder_pitch_link,
+    left_shoulder_roll_link, left_shoulder_yaw_link, left_elbow_link, left_wrist_roll_link,
+    left_wrist_pitch_link, left_wrist_yaw_link, left_rubber_hand, right_shoulder_pitch_link,
+    right_shoulder_roll_link, right_shoulder_yaw_link, right_elbow_link, right_wrist_roll_link,
+    right_wrist_pitch_link, right_wrist_yaw_link, right_rubber_hand]
+  joint_names: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+    left_ankle_pitch_joint, left_ankle_roll_joint, right_hip_pitch_joint, right_hip_roll_joint,
+    right_hip_yaw_joint, right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+    waist_yaw_joint, waist_roll_joint, waist_pitch_joint, left_shoulder_pitch_joint,
+    left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint,
+    left_wrist_pitch_joint, left_wrist_yaw_joint, right_shoulder_pitch_joint, right_shoulder_roll_joint,
+    right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint,
+    right_wrist_yaw_joint]
+  conditionable_body_names: [torso_link, right_ankle_roll_link, left_ankle_roll_link,
+    left_rubber_hand, right_rubber_hand]
+control:
+  stiffness: [40.17923847137318, 99.09842777666113, 40.17923847137318, 99.09842777666113,
+    28.50124619574858, 28.50124619574858, 40.17923847137318, 99.09842777666113, 40.17923847137318,
+    99.09842777666113, 28.50124619574858, 28.50124619574858, 40.17923847137318, 28.50124619574858,
+    28.50124619574858, 14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429,
+    14.25062309787429, 16.77832748089279, 16.77832748089279, 14.25062309787429, 14.25062309787429,
+    14.25062309787429, 14.25062309787429, 14.25062309787429, 16.77832748089279, 16.77832748089279]
+  damping: [2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395,
+    1.814445686584846, 1.814445686584846, 2.5578897650279457, 6.3088018534966395,
+    2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+    2.5578897650279457, 1.814445686584846, 1.814445686584846, 0.907222843292423, 0.907222843292423,
+    0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+    0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423,
+    1.06814150219, 1.06814150219]
+  effort_limits: [88.0, 139.0, 88.0, 139.0, 50.0, 50.0, 88.0, 139.0, 88.0, 139.0,
+    50.0, 50.0, 88.0, 50.0, 50.0, 25.0, 25.0, 25.0, 25.0, 25.0, 5.0, 5.0, 25.0, 25.0,
+    25.0, 25.0, 25.0, 5.0, 5.0]
+  action_scale: [0.5475465059280396, 0.3506614565849304, 0.5475465059280396, 0.3506614565849304,
+    0.4385773241519928, 0.4385773241519928, 0.5475465059280396, 0.3506614565849304,
+    0.5475465059280396, 0.3506614565849304, 0.4385773241519928, 0.4385773241519928,
+    0.5475465059280396, 0.4385773241519928, 0.4385773241519928, 0.4385773241519928,
+    0.4385773241519928, 0.4385773241519928, 0.4385773241519928, 0.4385773241519928,
+    0.07450086623430252, 0.07450086623430252, 0.4385773241519928, 0.4385773241519928,
+    0.4385773241519928, 0.4385773241519928, 0.4385773241519928, 0.07450086623430252,
+    0.07450086623430252]
+  pd_action_offset: [-0.31200000643730164, 0.0, 0.0, 0.6690000295639038, -0.3630000054836273,
+    0.0, -0.31200000643730164, 0.0, 0.0, 0.6690000295639038, -0.3630000054836273,
+    0.0, 0.0, 0.0, 0.0, 0.20000000298023224, 0.20000000298023224, 0.0, 0.6000000238418579,
+    0.0, 0.0, 0.0, 0.20000000298023224, -0.20000000298023224, 0.0, 0.6000000238418579,
+    0.0, 0.0, 0.0]
+  pd_target_max_accel: null
+  action_fn: bm_pd_action
+  action_ema_alpha: 1.0
+timing: {control_dt: 0.02, physics_dt: 0.001, decimation: 20}
+motion:
+  future_step_indices: [1, 2, 5, 7, 12, 18, 25]
+  future_dt_seconds: [0.02, 0.04, 0.1, 0.14, 0.24, 0.36, 0.5]
