@@ -137,6 +137,3 @@ MUJOCO_LOG.TXT
 # policy, own git repo; the integrated policy only needs the copied checkpoint
 # under assets/models/leggedlab/)
 LeggedLabDeploy/
-
-# Local reference motions
-/assets/motions/**/*.npz

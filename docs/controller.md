@@ -4,12 +4,11 @@ Controllers are operator-input sources. They do not own the policy, environment 
 
 | Deployment | Controller | Input source |
 | --- | --- | --- |
-| `sim` | `JoystickCtrl` | local Xbox-compatible controller |
+| `sim` | `KeyboardCtrl` | local keyboard |
 | `real` | `UnitreeCtrl` | wireless-remote bytes carried by G1 LowState |
 
-[`Controller`](../g1_playground/controller/base_ctrl.py) is a concrete queue consumer. `JoystickCtrl` and `UnitreeCtrl`
-are sibling subclasses that only connect different producers to those queues; neither input source inherits from the
-other. The deployment profile selects one `controller._target_`, and
+[`Controller`](../g1_playground/controller/base_ctrl.py) consumes the queues shared by the input sources. The deployment
+profile selects one `controller._target_`, and
 [`scripts/pipeline.py`](../scripts/pipeline.py) constructs it with the shared `G1Env`.
 
 ## Read contract
@@ -34,20 +33,20 @@ The policy consumes three normalized axes:
 
 The policy owns dead-zone, sign, and maximum-command scaling. Start each run with the sticks released.
 
-## JoystickCtrl
+## KeyboardCtrl
 
-[`JoystickCtrl`](../g1_playground/controller/joystick_ctrl.py) starts the pygame input thread and feeds the base queues.
-It is used by the two-process DDS simulation:
+The two-process DDS simulation uses the keyboard by default.
+[`KeyboardCtrl`](../g1_playground/controller/keyboard_ctrl.py)
 
 ```bash
 # Terminal 1: mandatory-viewer simulator
 python scripts/simulate.py
-# Terminal 2: policy client and local joystick
+# Terminal 2: policy client and local keyboard
 python scripts/pipeline.py deployment=sim
 ```
 
-If no local controller is connected, the producer keeps all axes at zero. In that case `A` is unavailable; use
-`Ctrl+C` to stop the client.
+Up/Down controls longitudinal motion, Left/Right controls yaw, and Shift+Left/Right controls lateral motion.
+Escape requests software shutdown.
 
 ## UnitreeCtrl
 

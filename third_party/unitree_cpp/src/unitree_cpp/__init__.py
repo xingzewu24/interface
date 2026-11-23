@@ -5,11 +5,6 @@ from .unitree_cpp import (
     DdsSportStateSnapshot,
     G1DdsControlEndpoint,
     G1DdsRobotEndpoint,
-    InspireCommandSnapshot,
-    InspireDdsControlEndpoint,
-    InspireDdsEndpointConfig,
-    InspireDdsRobotEndpoint,
-    InspireStateSnapshot,
 )
 from .unitree_cpp import ImuState as _ImuState
 from .unitree_cpp import MotorState as _MotorState

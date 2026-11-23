@@ -4,8 +4,6 @@ from threading import Lock
 import mujoco
 import numpy as np
 
-from .mujoco_scene import compile_mujoco_scene
-
 
 def snapshot(values: np.ndarray) -> np.ndarray:
     result = np.asarray(values).copy()
@@ -111,10 +109,6 @@ class G1MujocoBackend:
         timestep: float = 0.001,
         *,
         elastic_support_scale: float = 0.0,
-        expected_actuators: int = 29,
-        object_mjcf: str | None = None,
-        object_position: np.ndarray | None = None,
-        object_quaternion: np.ndarray | None = None,
     ):
         if (
             isinstance(timestep, bool)
@@ -124,22 +118,10 @@ class G1MujocoBackend:
         ):
             raise ValueError("MuJoCo backend timestep must be finite and positive")
         self.timestep = float(timestep)
-        if object_mjcf is None:
-            if object_position is not None or object_quaternion is not None:
-                raise ValueError("An object pose requires an object MJCF")
-            self.model = mujoco.MjModel.from_xml_path(xml_path)  # pyright: ignore[reportAttributeAccessIssue]
-        else:
-            self.model = compile_mujoco_scene(
-                xml_path,
-                object_mjcf,
-                object_position=object_position,
-                object_quaternion=object_quaternion,
-            )
+        self.model = mujoco.MjModel.from_xml_path(xml_path)  # pyright: ignore[reportAttributeAccessIssue]
         self.model.opt.timestep = self.timestep
-        if self.model.nu != expected_actuators:
-            raise ValueError(
-                f"G1 MuJoCo backend requires exactly {expected_actuators} actuators, model has {self.model.nu}"
-            )
+        if self.model.nu != 29:
+            raise ValueError(f"G1 MuJoCo backend requires exactly 29 actuators, model has {self.model.nu}")
         actuator_joint_ids = self.model.actuator_trnid[:, 0]
         self.actuator_qpos_indices = self.model.jnt_qposadr[actuator_joint_ids].copy()
         self.actuator_dof_indices = self.model.jnt_dofadr[actuator_joint_ids].copy()

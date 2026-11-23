@@ -3,7 +3,7 @@
 G1-Playground deliberately has one policy-facing environment boundary:
 
 ```text
-sim:  JoystickCtrl -> LeggedLabPolicy -> G1Env -> G1DdsControlEndpoint <-> HG DDS
+sim:  KeyboardCtrl -> LeggedLabPolicy -> G1Env -> G1DdsControlEndpoint <-> HG DDS
                                                                               <-> G1DdsRobotEndpoint
                                                                                   <-> G1MujocoDdsServer
                                                                                       <-> G1MujocoBackend
@@ -21,12 +21,11 @@ robot endpoint.
 
 | Profile | Controller | Endpoint | Command activation |
 | --- | --- | --- | --- |
-| `sim` (default) | `JoystickCtrl` | Domain 1 / `lo` | no MotionSwitcher |
+| `sim` (default) | `KeyboardCtrl` | Domain 1 / `lo` | no MotionSwitcher |
 | `real` | `UnitreeCtrl` | Domain 0 / explicit robot NIC | bounded MotionSwitcher release required |
 
-The root configuration owns the one `G1Env` target. Deployment profiles contain only five environment values
-(`domain_id`, `net_if`, LowCmd topic, LowState topic, MotionSwitcher requirement) and one controller target. The domain
-number does not carry simulator/hardware semantics.
+The root configuration owns the `G1Env` target. Deployment profiles supply the network interface, DDS domain and
+topics, MotionSwitcher requirement, and controller settings.
 
 Configuration ownership is intentionally narrow:
 
@@ -51,7 +50,7 @@ watchdog, and the launcher owns the fixed 60 Hz viewer constant.
 
 ```python
 dof = compose_dof_config(cfg.robot.dof, cfg.policy.dof)
-policy = LeggedLabPolicy(cfg.policy, device=cfg.device, dof_cfg=dof)
+policy = LeggedLabPolicy(cfg.policy, dof_cfg=dof)
 env = instantiate(cfg.env, dof_cfg=dof, control_dt=policy.dt)
 controller = instantiate(cfg.controller, env=env)
 ```
@@ -65,7 +64,7 @@ The three public data operations are equally small:
 - `Controller.read() -> (control, shutdown_requested)`: latest axes plus a boolean set by a pressed `A` edge;
 - `policy.act(state, control) -> target`: one 29-position target in G1 runtime order.
 
-`Controller` is a concrete queue consumer. `JoystickCtrl` and `UnitreeCtrl` are sibling producers; the Unitree variant
+`Controller` is a concrete queue consumer. `KeyboardCtrl` and `UnitreeCtrl` are sibling producers. The Unitree variant
 only attaches its parser to `env.remote_controller_handler`. `G1Env` has no reset, fallen state, cached-state API, Python
 configuration box, joint map, or recover hook. `read_frame()` applies the pure
 `g1_playground.utils.math.is_upright(state.base_quat)` predicate to the same snapshot that will be passed to the policy.
@@ -91,7 +90,7 @@ therefore the only reset at the ramp/active boundary.
 
 The policy's model layout is fixed by class constants: one frame of
 `ang_vel[3], gravity[3], commands[3], dof_pos[29], dof_vel[29], actions[29]`, yielding 96 inputs and 29 outputs (the
-checkpoint is recurrent; its LSTM state lives inside the model). Its
+checkpoint is recurrent and the exported model has explicit LSTM state tensors). Its
 50 Hz period (`policy.dt == 0.02`) is injected into `G1Env`, which passes it to native freshness/writer behavior.
 
 ## MuJoCo DDS server
@@ -126,7 +125,7 @@ Before the first valid command the backend advances with zero actuator torque an
 command, support releases linearly to zero over the 3-second standing ramp so the robot reaches the ground before locomotion takes direct control. A command older than the server's 0.1-second
 default timeout terminates the simulator. Torque is clipped only here, using `robot.dof.torque_limits`.
 
-The public launcher always opens the official MuJoCo viewer. Its main thread copies coherent backend data into separate
+The public launcher always opens the MuJoCo viewer. Its main thread copies coherent backend data into separate
 render data; the background server keeps the absolute physics deadline. Viewer input never mutates physics, and teardown
 preserves stop-event, worker join, robot-endpoint close, then viewer close behavior. Tests may instantiate the viewer-free
 lower layers directly.

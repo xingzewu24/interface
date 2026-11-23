@@ -23,8 +23,6 @@ class G1MujocoDdsServer:
         lowstate_factory: Callable,
         torque_limits,
         *,
-        body_index=None,
-        hand=None,
         sport_state_factory: Callable | None = None,
         sport_publish_hz: float = 50.0,
         command_timeout: float = 0.1,
@@ -38,22 +36,14 @@ class G1MujocoDdsServer:
         self.robot_endpoint = robot_endpoint
         self.lowstate_factory = lowstate_factory
         self.torque_limits = np.asarray(torque_limits, dtype=np.float64)
-        self.body_index = (
-            np.arange(self.torque_limits.shape[0], dtype=np.int64)
-            if body_index is None
-            else np.asarray(body_index, dtype=np.int64)
-        )
-        if self.body_index.shape != self.torque_limits.shape:
-            raise ValueError("body index must supply one model actuator per torque limit")
-        self.hand = hand
-        actuators = getattr(getattr(backend, "model", None), "nu", None)
-        self.num_actuators = int(actuators) if actuators is not None else int(self.torque_limits.shape[0])
         self.timestep = backend.timestep
         self.command_timeout = command_timeout
         self._clock = time.monotonic if clock is None else clock
         self._sleep = time.sleep if sleeper is None else sleeper
         self._first_command_time: float | None = None
         self._state = backend.read()
+        if self.torque_limits.shape != np.shape(self._state.joint_pos):
+            raise ValueError("DDS simulator requires one torque limit per actuator")
         self.sport_state_factory = sport_state_factory
         if not 0.0 < sport_publish_hz < np.inf:
             raise ValueError("Sport state publish rate must be finite and positive")
@@ -70,8 +60,8 @@ class G1MujocoDdsServer:
         return 1.0 - progress * (1.0 - SUPPORT_LANDING_SCALE)
 
     def command_torque(self, command, state, now: float) -> np.ndarray:
-        joint_pos = np.asarray(state.joint_pos)[self.body_index]
-        joint_vel = np.asarray(state.joint_vel)[self.body_index]
+        joint_pos = state.joint_pos
+        joint_vel = state.joint_vel
         if not command.valid:
             return np.zeros_like(joint_pos, dtype=np.float64)
         if not np.isfinite(command.age_seconds) or command.age_seconds < 0:
@@ -93,9 +83,9 @@ class G1MujocoDdsServer:
 
     def publish(self, state) -> int:
         snapshot = self.lowstate_factory()
-        snapshot.q = np.asarray(state.joint_pos)[self.body_index].tolist()
-        snapshot.dq = np.asarray(state.joint_vel)[self.body_index].tolist()
-        snapshot.tau_est = np.asarray(state.joint_torque)[self.body_index].tolist()
+        snapshot.q = np.asarray(state.joint_pos).tolist()
+        snapshot.dq = np.asarray(state.joint_vel).tolist()
+        snapshot.tau_est = np.asarray(state.joint_torque).tolist()
         snapshot.quaternion = state.base_quaternion_wxyz.tolist()
         snapshot.gyroscope = state.base_angular_velocity.tolist()
         return self.robot_endpoint.publish_lowstate(snapshot)
@@ -121,17 +111,8 @@ class G1MujocoDdsServer:
         if not np.isfinite(now):
             raise RuntimeError("DDS simulator clock returned a non-finite value")
         command = self.robot_endpoint.get_command()
-        body_torque = self.command_torque(command, self._state, now)
-
-        torque = np.zeros(self.num_actuators, dtype=np.float64)
-        torque[self.body_index] = body_torque
-        if self.hand is not None:
-            hand_index, hand_torque = self.hand.torque(self._state.joint_pos, self._state.joint_vel, now)
-            torque[hand_index] = hand_torque
-
+        torque = self.command_torque(command, self._state, now)
         self._state = self.backend.step(torque, self.support_scale(now))
-        if self.hand is not None:
-            self.hand.publish(self._state.joint_pos, self._state.joint_vel, self.timestep)
         self._physics_steps += 1
         if self._physics_steps % self.sport_stride == 0:
             self.publish_sport_state(self._state)
@@ -154,6 +135,4 @@ class G1MujocoDdsServer:
             self.shutdown()
 
     def shutdown(self) -> bool:
-        if self.hand is not None:
-            self.hand.shutdown()
         return self.robot_endpoint.close()

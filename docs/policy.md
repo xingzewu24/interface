@@ -41,18 +41,12 @@ length, or field layout into deployment configuration would create a second sour
 
 ## Recurrent state
 
-The checkpoint is an LSTM exported with its hidden/cell state as buffers inside the TorchScript module, which is why a
-single-frame observation suffices. Input normalization (`EmpiricalNormalization`) is baked into the graph, so the
-observation scales in YAML are all `1.0` and no external normalization is applied.
+The ONNX model runs through TensorRT and accepts the hidden and cell state as explicit inputs. The policy feeds the
+returned state into the next frame. Input normalization (`EmpiricalNormalization`) is baked into the graph, so the
+observation scales in YAML are all `1.0`.
 
-`reset()` restores the checkpoint's saved recurrent state from a snapshot taken at load time, then replays the reference
-launcher's zero-observation warm-up (`RESET_WARMUP_STEPS == 50`). The zero-input response of the LSTM does not converge
-within that horizon, so the snapshot restore is what makes every control session start from the exact recurrent state a
-fresh LeggedLabDeploy boot would control from.
-
-On CPU the constructor pins `torch.set_num_threads(1)`: the tiny LSTM gains nothing from intra-op parallelism while the
-default thread pool adds multi-ten-millisecond scheduling tails (p99 ~25 ms measured on a busy host) that blow the 50 Hz
-frame budget and the DDS command watchdog.
+`reset()` clears the policy history and recurrent state, then runs 50 inferences with a zero observation to warm up the
+LSTM.
 
 ## Observation and action
 
@@ -89,12 +83,14 @@ After replacing or re-exporting the checkpoint, verify its fixed shape:
 
 ```bash
 python - <<'PY'
-import torch
+from contextlib import closing
 
-model = torch.jit.load("assets/models/leggedlab/g1_policy.pt", map_location="cpu")
-action = model(torch.zeros(1, 96))
-assert tuple(action.shape) == (1, 29), action.shape
-print("checkpoint shape OK")
+from g1_playground.policy.tensorrt_runner import TensorRTRunner
+
+with closing(TensorRTRunner("assets/models/leggedlab/g1_policy.onnx")) as model:
+    assert model.shape("obs") == (1, 96)
+    assert model.shape("actions") == (1, 29)
+print("model shapes OK")
 PY
 ```
 

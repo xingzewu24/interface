@@ -18,12 +18,12 @@ endpoint.
 ## Construction and ownership
 
 The root [`configs/run_pipeline.yaml`](../configs/run_pipeline.yaml) owns the single `G1Env` `_target_`. A deployment
-profile contributes only endpoint/topics, `motion_switcher_required`, and its controller target. The launcher composes
+profile supplies DDS endpoint settings, `motion_switcher_required`, and its controller settings. The launcher composes
 policy pose/gains into runtime joint order, constructs the policy, then injects its period into the environment:
 
 ```python
 dof = compose_dof_config(cfg.robot.dof, cfg.policy.dof)
-policy = LeggedLabPolicy(cfg.policy, device=cfg.device, dof_cfg=dof)
+policy = LeggedLabPolicy(cfg.policy, dof_cfg=dof)
 env = instantiate(cfg.env, dof_cfg=dof, control_dt=policy.dt)
 controller = instantiate(cfg.controller, env=env)
 ```

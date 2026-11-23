@@ -15,16 +15,6 @@ class FakeRunner:
         return self.infer(inputs)
 
 
-def body_hand_runner(observation_dim=787):
-    base = np.linspace(-0.5, 0.5, 41, dtype=np.float32).reshape(1, 41)
-
-    def infer(inputs):
-        previous_action = np.asarray(inputs["obs"], dtype=np.float32)[:, -41:]
-        return {"actions": base + 0.1 * previous_action}
-
-    return FakeRunner({"obs": (1, observation_dim)}, {"actions": (1, 41)}, infer)
-
-
 def leggedlab_runner():
     state_shape = (1, 1, 256)
 
