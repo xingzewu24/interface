@@ -1,6 +1,6 @@
-# G1-Playground
+# interface
 
-G1-Playground runs the 50 Hz LeggedLab locomotion policy on the Unitree G1 29DoF. MuJoCo and the physical G1 share
+The interface project runs the 50 Hz LeggedLab locomotion policy on the Unitree G1 29DoF. MuJoCo and the physical G1 share
 one policy loop and the same Unitree DDS interface.
 
 ## Installation
@@ -8,9 +8,9 @@ one policy loop and the same Unitree DDS interface.
 Python 3.11 or newer is required.
 
 ```bash
-cd G1-Playground
-conda create -n g1-playground python=3.11 -y
-conda activate g1-playground
+cd interface
+conda create -n interface python=3.11 -y
+conda activate interface
 python -m pip install -e .
 python scripts/setup/install_third_party.py unitree_cpp
 ```
@@ -61,7 +61,8 @@ at entry. Metatron enters `stand`. Press **i** for `idle` or **k** for `steer`. 
 
 ## Synchronize the G1
 
-Run synchronization from the workstation repository root. Without `--apply`, the command is a dry run:
+Run synchronization from the workstation repository root. The script targets the existing `~/G1-Playground` directory
+on the G1. Without `--apply`, the command is a dry run:
 
 ```bash
 bash scripts/setup/sync_unitree_wifi.sh

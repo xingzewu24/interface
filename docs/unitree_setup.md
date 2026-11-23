@@ -27,7 +27,7 @@ the real profile.
 Use an Ubuntu host or the G1 onboard computer that can reach the robot's SDK2 network.
 
 1. Install Unitree SDK2 according to Unitree's instructions.
-2. From the G1-Playground repository root, build the vendored binding:
+2. From the `interface` repository root, build the vendored binding:
 
    ```bash
    python scripts/setup/install_third_party.py unitree_cpp

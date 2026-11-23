@@ -5,7 +5,7 @@ usage() {
     cat <<'EOF'
 Usage: scripts/setup/sync_unitree_wifi.sh [--apply] [--no-delete]
 
-Mirror this G1-Playground checkout to unitree-wifi:~/G1-Playground/.
+Mirror this interface checkout to unitree-wifi:~/G1-Playground/.
 
   --apply      Perform the transfer. Without this flag, only show a dry run.
   --no-delete  Keep remote source files that no longer exist locally.
@@ -63,7 +63,7 @@ rsync_args=(
     --exclude=venv/
     --exclude=build/
     --exclude=dist/
-    --exclude=/g1_playground.egg-info/
+    --exclude='/*.egg-info/'
     --filter='-s /third_party/**/*.egg-info/***'
     --exclude=logs/
     --exclude='*.py[cod]'

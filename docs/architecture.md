@@ -1,6 +1,6 @@
-# G1-Playground Sim2Sim / Sim2Real Architecture
+# interface Sim2Sim / Sim2Real Architecture
 
-G1-Playground deliberately has one policy-facing environment boundary:
+The interface project has one policy-facing environment boundary:
 
 ```text
 sim:  KeyboardCtrl -> LeggedLabPolicy -> G1Env -> G1DdsControlEndpoint <-> HG DDS

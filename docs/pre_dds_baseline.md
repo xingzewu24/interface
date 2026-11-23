@@ -8,7 +8,7 @@ claim that the current hardware path is production-safe.
 > deployment. The top-level vendor README deletion is intentional and the stale layout assertion has been removed.
 >
 > This historical record intentionally retains the former RoboJuDo project/distribution name and the former `-c g1` /
-> `-c g1_real` commands. The current G1-Playground entry point uses `deployment=sim` / `deployment=real`; renaming the
+> `-c g1_real` commands. The current `interface` entry point uses `deployment=sim` / `deployment=real`; renaming the
 > recorded Phase 0 identity or commands would misstate the frozen evidence.
 >
 > Likewise, “after policy-to-environment merging” below describes the captured implementation. The current runtime keeps
