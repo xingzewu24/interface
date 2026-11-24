@@ -11,7 +11,7 @@ from g1_playground.interface.metatron.skills import SkillLayer
 from g1_playground.policy.metatron import MetatronPolicy
 from g1_playground.policy.metatron.metatron_contract import MetatronContract
 from g1_playground.policy.track import TrackPolicy
-from g1_playground.policy_handoff import Gains, HandoffLocomotion, HandoffPolicy, PolicyHandoff
+from g1_playground.policy_fsm import Gains, LocomotionPolicy, PolicyInterpManager, PolicyWrapper
 from g1_playground.utils import resolve_repo_path
 from g1_playground.utils.dof import compose_dof_config
 from tests.config_helpers import compose_config
@@ -93,24 +93,24 @@ class TestMetatronSwitching(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "pending"):
             self.policy.accept_applied_target(applied)
 
-    def handoff(self, *modes):
-        loco = HandoffLocomotion(self.cfg.policy, dof_cfg=self.dof, runner=leggedlab_runner())
+    def make_policy_manager(self, *policy_ids):
+        loco = LocomotionPolicy(self.cfg.policy, dof_cfg=self.dof, runner=leggedlab_runner())
         effort = np.asarray(self.cfg.robot.dof.torque_limits)
         gains = Gains(np.asarray(self.dof.stiffness), np.asarray(self.dof.damping), effort)
         policies = {}
-        if "metatron" in modes:
+        if "metatron" in policy_ids:
             skills = SkillLayer(self.policy.dt, self.fk.prompt_slots, self.fk.default_pose)
             metatron_gains = Gains(
                 self.policy.stiffness, self.policy.damping, np.minimum(effort, self.policy.effort_limits)
             )
-            policies["metatron"] = HandoffPolicy(
+            policies["metatron"] = PolicyWrapper(
                 self.policy,
                 self.cfg.metatron,
                 metatron_gains,
                 self.policy.joint_limits,
                 skills=skills,
             )
-        if "track" in modes:
+        if "track" in policy_ids:
             dof = compose_dof_config(self.cfg.robot.dof, self.cfg.track.dof)
             runner = FakeRunner(
                 {"obs": (1, 167), "obs_history": (1, 3, 167)},
@@ -120,28 +120,28 @@ class TestMetatronSwitching(unittest.TestCase):
             track = TrackPolicy(self.cfg.track, dof_cfg=dof, runner=runner)
             track_gains = Gains(np.asarray(dof.stiffness), np.asarray(dof.damping), effort)
             limits = np.column_stack((track.joint_pos_lower, track.joint_pos_upper))
-            policies["track"] = HandoffPolicy(track, self.cfg.track, track_gains, limits)
+            policies["track"] = PolicyWrapper(track, self.cfg.track, track_gains, limits)
 
         def run_inline(action, *args):
             result = Future()
             result.set_result(action(*args))
             return result
 
-        with patch("g1_playground.policy_handoff.ThreadPoolExecutor") as executor:
+        with patch("g1_playground.policy_fsm.ThreadPoolExecutor") as executor:
             executor.return_value.submit.side_effect = run_inline
-            handoff = PolicyHandoff(loco, gains, policies)
-        handoff.warmup(self.state, self.odometry)
-        return handoff
+            manager = PolicyInterpManager(loco, gains, policies)
+        manager.warmup(self.state, self.odometry)
+        return manager
 
-    def test_bidirectional_handoff_and_odometry_loss(self):
-        handoff = self.handoff("metatron")
+    def test_bidirectional_switch_and_odometry_loss(self):
+        manager = self.make_policy_manager("metatron")
         sent, gains = [], []
         env = SimpleNamespace(step=sent.append, set_gains=lambda kp, kd: gains.append(kp))
         axes = {"LeftY": 0.0, "LeftX": 0.0, "RightX": 0.0}
         control = {"axes": axes, "buttons": {"X"}}
-        self.assertEqual(handoff.step(env, self.state, None, control, 0.0).mode, "loco")
+        self.assertEqual(manager.step(env, self.state, None, control, 0.0).mode, "loco")
         frames = []
-        loco = handoff.loco
+        loco = manager.loco
         with (
             patch.object(loco, "act", wraps=loco.act) as loco_act,
             patch.object(self.policy, "act", wraps=self.policy.act) as metatron_act,
@@ -153,7 +153,7 @@ class TestMetatronSwitching(unittest.TestCase):
                 for call in (loco_act, metatron_act, loco_accept, meta_accept):
                     call.reset_mock()
                 frames.append(
-                    handoff.step(env, self.state, self.odometry, {"axes": axes, "buttons": buttons}, frame * 0.03)
+                    manager.step(env, self.state, self.odometry, {"axes": axes, "buttons": buttons}, frame * 0.03)
                 )
                 if frame in (3, 12, 19):
                     loco_act.assert_called_once()
@@ -165,7 +165,7 @@ class TestMetatronSwitching(unittest.TestCase):
                 if frame == 11:
                     self.assertEqual(frames[-1].mode, "to_loco")
                     with self.assertRaisesRegex(RuntimeError, "Metatron to loco lost fresh pelvis odometry"):
-                        handoff.step(env, self.state, None, {"axes": axes}, 0.34)
+                        manager.step(env, self.state, None, {"axes": axes}, 0.34)
                     self.assertEqual(len(sent), frame + 1)
         modes = list(dict.fromkeys(frame.mode for frame in frames))
         self.assertEqual(modes, ["loco", "to_metatron", "metatron", "to_loco"])
@@ -174,54 +174,60 @@ class TestMetatronSwitching(unittest.TestCase):
         self.assertEqual(len(sent), 22)
         self.assertGreater(len(gains), 4)
         with self.assertRaisesRegex(RuntimeError, "lost fresh pelvis odometry"):
-            handoff.step(env, self.state, None, {"axes": axes}, 1.0)
+            manager.step(env, self.state, None, {"axes": axes}, 1.0)
         self.assertEqual(len(sent), 22)
 
     def test_metatron_keeps_loco_until_primed_and_seeds_history_without_inference(self):
-        handoff = self.handoff("metatron")
+        manager = self.make_policy_manager("metatron")
         sent = []
         env = SimpleNamespace(step=sent.append, set_gains=lambda kp, kd: None)
         axes = {"LeftY": 0.0, "LeftX": 0.0, "RightX": 0.0}
         control = {"axes": axes}
-        handoff.step(env, self.state, self.odometry, {**control, "buttons": {"X"}}, 0.0)
+        self.assertIs(manager.interp_state, manager.InterpState.IDLE)
+        manager.step(env, self.state, self.odometry, {**control, "buttons": {"X"}}, 0.0)
+        self.assertIs(manager.interp_state, manager.InterpState.SETTLING)
         priming = Future()
-        handoff._warmup_worker.submit.side_effect = None
-        handoff._warmup_worker.submit.return_value = priming
+        manager._warmup_worker.submit.side_effect = None
+        manager._warmup_worker.submit.return_value = priming
         with (
             patch.object(self.policy.runner, "run", wraps=self.policy.runner.run) as infer,
             patch.object(self.fk, "read", wraps=self.fk.read) as read_pose,
         ):
-            waiting = handoff.step(env, self.state, self.odometry, control, 0.03)
+            waiting = manager.step(env, self.state, self.odometry, control, 0.03)
             self.assertEqual(waiting.mode, "loco")
+            self.assertIs(manager.interp_state, manager.InterpState.PRIMING)
+            self.assertEqual(manager.current_policy_id, "loco")
             self.assertEqual(len(sent), 2)
             read_pose.assert_not_called()
             infer.assert_not_called()
 
             priming.set_result(None)
-            first = handoff.step(env, self.state, self.odometry, control, 0.06)
+            first = manager.step(env, self.state, self.odometry, control, 0.06)
             self.assertEqual(first.mode, "to_metatron")
+            self.assertIs(manager.interp_state, manager.InterpState.IN_PROGRESS)
+            self.assertEqual(manager.current_policy_id, "metatron")
             read_pose.assert_called_once()
             infer.assert_not_called()
             np.testing.assert_allclose(sent[1], first.target)
 
-            handoff.step(env, self.state, self.odometry, control, 0.09)
+            manager.step(env, self.state, self.odometry, control, 0.09)
             infer.assert_called_once()
             model_target = self.policy.observation_adapter.fit(first.target)
             expected = ((model_target - self.policy.default_pos) / self.policy.action_scale)[None]
             np.testing.assert_allclose(infer.call_args.args[0]["current_action"], expected)
         self.assertEqual(len(sent), 4)
 
-    def test_track_round_trip_and_mixed_handoffs(self):
-        handoff = self.handoff("track", "metatron")
+    def test_track_round_trip_and_mixed_switches(self):
+        manager = self.make_policy_manager("track", "metatron")
         sent, gains = [], []
         env = SimpleNamespace(step=sent.append, set_gains=lambda kp, kd: gains.append(kp))
         axes = {"LeftY": 0.0, "LeftX": 0.0, "RightX": 0.0}
-        self.assertEqual(handoff.step(env, self.state, None, {"axes": axes, "buttons": {"L1"}}, 0.0).mode, "loco")
+        self.assertEqual(manager.step(env, self.state, None, {"axes": axes, "buttons": {"L1"}}, 0.0).mode, "loco")
         commands = {1: "L1", 6: "B", 11: "L1", 16: "X", 21: "L1", 26: "B"}
         modes = []
-        track = handoff.policies["track"].policy
+        track = manager.policies["track"].policy
         with (
-            patch.object(handoff.loco, "act", wraps=handoff.loco.act) as loco_act,
+            patch.object(manager.loco, "act", wraps=manager.loco.act) as loco_act,
             patch.object(track, "act", wraps=track.act) as track_act,
         ):
             for index in range(1, 32):
@@ -229,7 +235,7 @@ class TestMetatronSwitching(unittest.TestCase):
                 control = {"axes": axes, "buttons": () if button is None else (button,)}
                 loco_act.reset_mock()
                 track_act.reset_mock()
-                modes.append(handoff.step(env, self.state, self.odometry, control, index * 0.03).mode)
+                modes.append(manager.step(env, self.state, self.odometry, control, index * 0.03).mode)
                 if index in (3, 8):
                     loco_act.assert_called_once()
                     track_act.assert_called_once()

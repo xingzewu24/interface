@@ -4,6 +4,7 @@ import logging
 import math
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -16,14 +17,16 @@ from g1_playground.utils.dof import compose_dof_config
 if TYPE_CHECKING:
     from g1_playground.g1_env import G1Env, G1Odometry, G1State
     from g1_playground.interface.metatron.skills import SkillLayer
+    from g1_playground.policy.metatron import MetatronPolicy
     from g1_playground.policy.metatron.metatron_observation import MetatronState
+    from g1_playground.policy.track import TrackPolicy
 
 logger = logging.getLogger(__name__)
 LOCO = "loco"
 NEUTRAL_CONTROL = {"axes": dict.fromkeys(("LeftX", "LeftY", "RightX"), 0.0)}
 
 
-class HandoffLocomotion(LeggedLabPolicy):
+class LocomotionPolicy(LeggedLabPolicy):
     """Reuse the warmed LeggedLab state when taking control back at 50 Hz."""
 
     def reset(self) -> None:
@@ -61,8 +64,8 @@ class Gains:
         return np.clip(np.clip(target, center - radius, center + radius), limits[:, 0], limits[:, 1])
 
 
-class HandoffPolicy:
-    """Policy and control settings used during a handoff."""
+class PolicyWrapper:
+    """Policy entry with its gains, switch timing, and optional skill layer."""
 
     def __init__(
         self,
@@ -72,11 +75,13 @@ class HandoffPolicy:
         joint_limits: np.ndarray,
         *,
         skills: SkillLayer | None = None,
+        publish_prompt=None,
     ):
         self.policy = policy
         self.gains = gains
         self.joint_limits = joint_limits
         self.skills = skills
+        self._publish_prompt = publish_prompt
         self.transition_seconds = float(cfg.transition_seconds)
         self.settle_seconds = float(cfg.settle_seconds)
         self.settle_timeout = float(cfg.settle_timeout_seconds)
@@ -106,7 +111,10 @@ class HandoffPolicy:
         observation = self.policy.observation
         frame = observation.read(state, odometry)
         prompt = self.skills.advance(observation.skill_context(frame), control, settling=settling)
-        return self.policy.act(frame, prompt)
+        target = self.policy.act(frame, prompt)
+        if self._publish_prompt is not None:
+            self._publish_prompt(self.skills.name, prompt)
+        return target
 
     def warmup(self, state: G1State, odometry: G1Odometry) -> None:
         frame = self.enter(state, odometry)
@@ -119,13 +127,13 @@ class HandoffPolicy:
 
 
 @dataclass
-class Transition:
-    source: str
-    start: np.ndarray
-    gains: Gains
+class PolicyInterpolation:
+    source_policy_id: str
+    start_target: np.ndarray
+    start_gains: Gains
     joint_limits: np.ndarray
     steps: int
-    frame: int = 0
+    timestep: int = 0
 
 
 @dataclass(frozen=True)
@@ -135,10 +143,16 @@ class AppliedFrame:
     skill: str | None
 
 
-class PolicyHandoff:
+class PolicyInterpManager:
     """Select one policy and send one G1 command per control tick."""
 
-    def __init__(self, loco: HandoffLocomotion, loco_gains: Gains, policies: dict[str, HandoffPolicy]):
+    class InterpState(Enum):
+        IDLE = auto()
+        SETTLING = auto()
+        PRIMING = auto()
+        IN_PROGRESS = auto()
+
+    def __init__(self, loco: LocomotionPolicy, loco_gains: Gains, policies: dict[str, PolicyWrapper]):
         self.loco = loco
         self.policies = policies
         self._gains = {LOCO: loco_gains, **{name: entry.gains for name, entry in policies.items()}}
@@ -155,11 +169,11 @@ class PolicyHandoff:
         ):
             raise ValueError("Handoff needs finite positive stiffness and effort limits and nonnegative damping")
 
-        self.mode = LOCO
-        self._transition: Transition | None = None
-        self._pending: str | None = None
-        self._pending_since = 0.0
+        self._current_policy_id = LOCO
+        self._next_policy_id: str | None = None
+        self._switch_requested_at = 0.0
         self._stable_since: float | None = None
+        self._interpolation: PolicyInterpolation | None = None
         self._last_target = loco.standing_target
         self._applied_gains = loco_gains
         self._warmup_worker = (
@@ -167,7 +181,22 @@ class PolicyHandoff:
             if any(entry.skills is not None for entry in policies.values())
             else None
         )
-        self._priming: Future | None = None
+        self._prime_future: Future | None = None
+
+    @property
+    def current_policy_id(self) -> str:
+        return self._current_policy_id
+
+    @property
+    def interp_state(self) -> InterpState:
+        """Report the phase from the current switch and interpolation fields."""
+        if self._interpolation is not None:
+            return self.InterpState.IN_PROGRESS
+        if self._prime_future is not None:
+            return self.InterpState.PRIMING
+        if self._next_policy_id is not None:
+            return self.InterpState.SETTLING
+        return self.InterpState.IDLE
 
     def warmup(self, state: G1State, odometry: G1Odometry | None) -> None:
         if odometry is None:
@@ -183,123 +212,150 @@ class PolicyHandoff:
             self._warmup_worker.shutdown(wait=False, cancel_futures=True)
 
     def _cancel_priming(self) -> None:
-        if self._priming is not None:
-            self._priming.cancel()
-            self._priming = None
+        if self._prime_future is not None:
+            self._prime_future.cancel()
+            self._prime_future = None
 
-    def _request(self, buttons, odometry: G1Odometry | None, clock: float) -> None:
-        destination = next(
+    def _request_policy_switch(self, buttons, odometry: G1Odometry | None, clock: float) -> None:
+        policy_id = next(
             (name for button, name in POLICY_BUTTONS.items() if button in buttons and name in self._gains), None
         )
-        if destination is None or destination == self._pending:
+        if policy_id is None or policy_id == self._next_policy_id:
             return
-        if destination == self.mode:
-            self._pending = None
+        if policy_id == self.current_policy_id:
+            self._next_policy_id = None
             self._cancel_priming()
             return
         if odometry is None:
-            logger.warning("Handoff to %s declined because pelvis odometry is unavailable", destination)
+            logger.warning("Handoff to %s declined because pelvis odometry is unavailable", policy_id)
             return
-        self._pending = destination
+        self._next_policy_id = policy_id
         self._cancel_priming()
-        self._pending_since = clock
+        self._switch_requested_at = clock
         self._stable_since = None
-        logger.info("Handoff to %s requested, waiting for a stable stance", destination)
+        logger.info("Handoff to %s requested, waiting for a stable stance", policy_id)
 
-    def _ready(self, handoff: HandoffPolicy, odometry: G1Odometry | None, clock: float) -> bool:
-        if odometry is None or clock - self._pending_since >= handoff.settle_timeout:
-            logger.warning("Handoff to %s canceled because stable, fresh odometry was unavailable", self._pending)
-            self._pending = None
+    def _is_settled(self, entry: PolicyWrapper, odometry: G1Odometry | None, clock: float) -> bool:
+        if odometry is None or clock - self._switch_requested_at >= entry.settle_timeout:
+            logger.warning(
+                "Handoff to %s canceled because stable, fresh odometry was unavailable", self._next_policy_id
+            )
+            self._next_policy_id = None
             self._cancel_priming()
             return False
-        if np.linalg.norm(odometry.velocity) > handoff.max_switch_speed:
+        if np.linalg.norm(odometry.velocity) > entry.max_switch_speed:
             self._stable_since = None
             self._cancel_priming()
             return False
         if self._stable_since is None:
             self._stable_since = clock
-        return clock - self._stable_since >= handoff.settle_seconds
+        return clock - self._stable_since >= entry.settle_seconds
 
-    def _prepared(self, destination: str, handoff: HandoffPolicy) -> bool:
-        if destination == LOCO or handoff.skills is None:
+    def _is_policy_primed(self, policy_id: str, entry: PolicyWrapper) -> bool:
+        if policy_id == LOCO or entry.skills is None:
             return True
-        if self._priming is None:
-            self._priming = self._warmup_worker.submit(handoff.policy.prime)
-        if not self._priming.done():
+        if self._prime_future is None:
+            self._prime_future = self._warmup_worker.submit(entry.policy.prime)
+        if not self._prime_future.done():
             return False
-        self._priming.result()
-        self._priming = None
+        self._prime_future.result()
+        self._prime_future = None
         return True
 
-    def _begin(
-        self, destination: str, handoff: HandoffPolicy, state: G1State, odometry: G1Odometry
+    def _update_policy_switch(
+        self, state: G1State, odometry: G1Odometry | None, control, clock: float
     ) -> MetatronState | None:
-        self._transition = Transition(
-            self.mode,
+        self._request_policy_switch(control.get("buttons", ()), odometry, clock)
+        policy_id = self._next_policy_id
+        if policy_id is None:
+            return None
+        # The alternate policy supplies the timing and limits for a switch back to locomotion.
+        entry = self.policies[self.current_policy_id if policy_id == LOCO else policy_id]
+        if self._is_settled(entry, odometry, clock) and self._is_policy_primed(policy_id, entry):
+            return self._interpolate_start(policy_id, entry, state, odometry)
+        return None
+
+    def _interpolate_start(
+        self, policy_id: str, entry: PolicyWrapper, state: G1State, odometry: G1Odometry
+    ) -> MetatronState | None:
+        self._interpolation = PolicyInterpolation(
+            self.current_policy_id,
             self._last_target.copy(),
             self._applied_gains,
-            handoff.joint_limits,
-            math.ceil(handoff.transition_seconds / self.loco.dt),
+            entry.joint_limits,
+            math.ceil(entry.transition_seconds / self.loco.dt),
         )
-        self.mode = destination
-        self._pending = None
+        self._current_policy_id = policy_id
+        self._next_policy_id = None
         entry_frame = None
-        if self.mode == LOCO:
+        if policy_id == LOCO:
             self.loco.reset()
         else:
-            entry_frame = handoff.enter(state, odometry)
-            if handoff.skill is not None:
-                logger.info("%s skill %s", self.mode.capitalize(), handoff.skill)
-        logger.info("Transition to %s started", self.mode)
+            entry_frame = entry.enter(state, odometry)
+            if entry.skill is not None:
+                logger.info("%s skill %s", policy_id.capitalize(), entry.skill)
+        logger.info("Transition to %s started", policy_id)
         return entry_frame
 
+    def _interpolate_step(
+        self,
+        interp: PolicyInterpolation,
+        state: G1State,
+        odometry: G1Odometry,
+        target: np.ndarray,
+        gains: Gains,
+    ) -> tuple[np.ndarray, Gains, LocomotionPolicy | TrackPolicy | MetatronPolicy | None]:
+        progress = interp.timestep / interp.steps
+        alpha = progress * progress * (3.0 - 2.0 * progress)
+        start_gains = interp.start_gains
+        blended_gains = start_gains if alpha == 0 else gains if alpha == 1 else start_gains.mix(gains, alpha)
+
+        source_target = interp.start_target
+        source_policy = None
+        if 0 < alpha < 1:
+            source = self.policies.get(interp.source_policy_id)
+            if source is None:
+                source_policy = self.loco
+                source_target = source_policy.act(state, NEUTRAL_CONTROL)
+            else:
+                source_policy = source.policy
+                source_target = source.act(state, odometry, NEUTRAL_CONTROL, settling=True)
+
+        # Blend the two PD torques at the same state, including differing stiffness.
+        target = ((1.0 - alpha) * start_gains.kp * source_target + alpha * gains.kp * target) / blended_gains.kp
+        return blended_gains.limit_target(state, target, interp.joint_limits), blended_gains, source_policy
+
     def step(self, env: G1Env, state: G1State, odometry: G1Odometry | None, control, clock: float) -> AppliedFrame:
-        transition = self._transition
-        if odometry is None and (self.mode != LOCO or transition is not None):
-            active = self.mode if transition is None else f"{transition.source} to {self.mode}"
+        interp = self._interpolation
+        if odometry is None and (self.current_policy_id != LOCO or interp is not None):
+            active = self.current_policy_id
+            if interp is not None:
+                active = f"{interp.source_policy_id} to {active}"
             raise RuntimeError(f"{active.capitalize()} lost fresh pelvis odometry")
         entry_frame = None
-        if transition is None:
-            self._request(control.get("buttons", ()), odometry, clock)
-            if (destination := self._pending) is not None:
-                # The alternate policy supplies return-to-loco timing as well as entry timing.
-                handoff = self.policies[self.mode if destination == LOCO else destination]
-                if self._ready(handoff, odometry, clock) and self._prepared(destination, handoff):
-                    entry_frame = self._begin(destination, handoff, state, odometry)
+        if interp is None:
+            entry_frame = self._update_policy_switch(state, odometry, control, clock)
 
-        transition = self._transition
-        entry = self.policies.get(self.mode)
-        gains = self._gains[self.mode]
+        interp = self._interpolation
+        policy_id = self.current_policy_id
+        entry = self.policies.get(policy_id)
+        gains = self._gains[policy_id]
+        settling = self._next_policy_id is not None
         if entry_frame is not None:
             # The first blend tick has zero incoming weight. Seed its history from the command that is sent.
-            target = transition.start
+            target = interp.start_target
         elif entry is None:
-            use_neutral = transition is not None or self._pending is not None
+            use_neutral = interp is not None or settling
             target = self.loco.act(state, NEUTRAL_CONTROL if use_neutral else control)
         else:
-            active_control = NEUTRAL_CONTROL if transition is not None else control
-            target = entry.act(state, odometry, active_control, settling=self._pending is not None)
+            active_control = NEUTRAL_CONTROL if interp is not None else control
+            target = entry.act(state, odometry, active_control, settling=settling)
 
-        phase = self.mode
-        outgoing = None
-        if transition is not None:
-            fraction = transition.frame / transition.steps
-            alpha = fraction * fraction * (3.0 - 2.0 * fraction)
-            blended = transition.gains if alpha == 0 else gains if alpha == 1 else transition.gains.mix(gains, alpha)
-            source_target = transition.start
-            if 0 < alpha < 1:
-                source = self.policies.get(transition.source)
-                if source is None:
-                    outgoing = self.loco
-                    source_target = self.loco.act(state, NEUTRAL_CONTROL)
-                else:
-                    outgoing = source.policy
-                    source_target = source.act(state, odometry, NEUTRAL_CONTROL, settling=True)
-            # Blend the two PD torques at the same state, including differing stiffness.
-            target = ((1.0 - alpha) * transition.gains.kp * source_target + alpha * gains.kp * target) / blended.kp
-            gains = blended
-            phase = f"to_{self.mode}"
-            target = gains.limit_target(state, target, transition.joint_limits)
+        phase = policy_id
+        source_policy = None
+        if interp is not None:
+            target, gains, source_policy = self._interpolate_step(interp, state, odometry, target, gains)
+            phase = f"to_{policy_id}"
         elif entry is not None:
             target = gains.limit_target(state, target, entry.joint_limits)
 
@@ -312,21 +368,21 @@ class PolicyHandoff:
             entry.policy.seed_applied_target(entry_frame, target)
         elif entry is not None:
             entry.policy.accept_applied_target(target)
-        elif transition is not None:
+        elif interp is not None:
             self.loco.accept_applied_target(target)
-        if outgoing is not None:
-            outgoing.accept_applied_target(target)
+        if source_policy is not None:
+            source_policy.accept_applied_target(target)
         self._last_target = target.copy()
 
-        if transition is not None:
-            transition.frame += 1
-            if transition.frame > transition.steps:
-                self._transition = None
-                logger.info("Transition to %s complete", self.mode)
+        if interp is not None:
+            interp.timestep += 1
+            if interp.timestep > interp.steps:
+                self._interpolation = None
+                logger.info("Transition to %s complete", policy_id)
         return AppliedFrame(target, phase, None if entry is None else entry.skill)
 
 
-def setup_handoff(cfg, dof):
+def setup_policy_fsm(cfg, dof, *, publish_prompt=None):
     enabled = {name: cfg.get(name, {}) for name in ("track", "metatron") if cfg.get(name, {}).get("enabled", False)}
     if not enabled:
         return None, cfg.controller
@@ -336,7 +392,7 @@ def setup_handoff(cfg, dof):
         if cfg.env.motion_switcher_required and not settings.allow_real:
             raise ValueError(f"Verify the real G1 odometry and gains before enabling {name} handoff on hardware")
 
-    loco = HandoffLocomotion(cfg.policy, dof_cfg=dof)
+    loco = LocomotionPolicy(cfg.policy, dof_cfg=dof)
     effort = np.asarray(cfg.robot.dof.torque_limits, dtype=float)
     policies = {}
     if "track" in enabled:
@@ -346,7 +402,7 @@ def setup_handoff(cfg, dof):
         track = TrackPolicy(cfg.track, dof_cfg=track_dof)
         track_gains = Gains(np.asarray(track_dof.stiffness), np.asarray(track_dof.damping), effort)
         limits = np.column_stack((track.joint_pos_lower, track.joint_pos_upper))
-        policies["track"] = HandoffPolicy(track, cfg.track, track_gains, limits)
+        policies["track"] = PolicyWrapper(track, cfg.track, track_gains, limits)
     if "metatron" in enabled:
         from g1_playground.interface.metatron.skills import SkillLayer
         from g1_playground.policy.metatron import MetatronPolicy
@@ -361,12 +417,13 @@ def setup_handoff(cfg, dof):
             steer_yaw_rate=cfg.metatron.steer_yaw_rate_limit,
         )
         metatron_gains = Gains(metatron.stiffness, metatron.damping, np.minimum(effort, metatron.effort_limits))
-        policies["metatron"] = HandoffPolicy(
+        policies["metatron"] = PolicyWrapper(
             metatron,
             cfg.metatron,
             metatron_gains,
             metatron.joint_limits,
             skills=skills,
+            publish_prompt=publish_prompt,
         )
 
     controller = cfg.controller
@@ -374,4 +431,6 @@ def setup_handoff(cfg, dof):
         controller = OmegaConf.merge(
             controller, {"_target_": "g1_playground.controller.policy_ctrl.PolicyKeyboardCtrl"}
         )
-    return PolicyHandoff(loco, Gains(np.asarray(dof.stiffness), np.asarray(dof.damping), effort), policies), controller
+    return PolicyInterpManager(
+        loco, Gains(np.asarray(dof.stiffness), np.asarray(dof.damping), effort), policies
+    ), controller

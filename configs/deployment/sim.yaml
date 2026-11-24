@@ -19,3 +19,5 @@ controller:
 
 sim_odometry:
   publish_hz: 50.0
+
+sim_prompt_port: 18755

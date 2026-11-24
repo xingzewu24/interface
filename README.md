@@ -56,7 +56,9 @@ python -m scripts.pipeline deployment=sim track.enabled=true metatron.enabled=tr
 
 The client starts in LeggedLab. Press **t** for Track, **[** for Metatron, and **]** for LeggedLab. When both are enabled,
 the same keys also switch directly between Track and Metatron. Track holds its standing reference, aligned to the heading
-at entry. Metatron enters `stand`. Press **i** for `idle` or **k** for `steer`. Escape requests software shutdown.
+at entry. Metatron enters `stand`. Press **i** for `idle` or **k** for `steer`.
+The viewer draws the live Metatron prompt. Press **p** in the MuJoCo window to toggle it.
+Escape requests software shutdown.
 [Controller mappings](docs/controller.md)
 
 ## Synchronize the G1

@@ -63,6 +63,12 @@ blended command per tick. Press edges received during a gain transition are igno
 | Metatron `idle` | `i` | `Y` |
 | Metatron `steer` | `k` | `R1` |
 
+MuJoCo shows the active Metatron prompt in the world frame. Larger, brighter dots mark nearer position targets,
+and lines connect the future positions of each body. The torso uses cyan, the left and right ankles use lime and
+orange, and the left and right hands use violet and pink. Flat cyan markers indicate height-only targets. Arrows
+show target directions, with RGB axes for the nearest full rotation and a yellow arrow for XY velocity. The legend
+shows the active skill and time horizon. Press `p` in the MuJoCo window to toggle the overlay.
+
 The real deployment requires an explicit `track.allow_real=true` or `metatron.allow_real=true` for each enabled handoff,
 after checking the target robot's odometry and gains.
 

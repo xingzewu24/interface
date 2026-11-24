@@ -4,7 +4,7 @@
 
 - [ ] Revisit both Track ↔ Metatron transitions. Compare settling criteria, entry posture, action-history
   initialization, and blend duration in both directions. Measure joint target continuity and worst-case control tick
-  time. [Handoff implementation](g1_playground/policy_handoff.py)
+  time. [Policy FSM implementation](g1_playground/policy_fsm.py)
 - [ ] Review where the handoff and input code live. Keep the shared transition lifecycle in one place and move
   policy-specific preparation and input mappings closer to the components that own them.
   [Policy input mappings](g1_playground/controller/policy_ctrl.py)

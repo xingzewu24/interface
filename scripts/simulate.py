@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import logging
 import threading
 import time
 
@@ -11,12 +12,21 @@ from g1_playground.simulation.mujoco_viewer import MujocoViewer
 from g1_playground.utils import resolve_repo_path
 from g1_playground.utils.logger import setup_logger
 
+if __package__:
+    from .prompt_overlay import draw_prompt
+    from .telemetry import PromptReceiver
+else:
+    from prompt_overlay import draw_prompt
+    from telemetry import PromptReceiver
+
 RENDER_HZ = 60.0
+logger = logging.getLogger("g1_playground")
 
 
-def build_server() -> G1MujocoDdsServer:
+def build_server(sim=None) -> G1MujocoDdsServer:
     robot = OmegaConf.load(resolve_repo_path("configs/robot/g1.yaml"))
-    sim = OmegaConf.load(resolve_repo_path("configs/deployment/sim.yaml"))
+    if sim is None:
+        sim = OmegaConf.load(resolve_repo_path("configs/deployment/sim.yaml"))
     try:
         unitree_cpp = importlib.import_module("unitree_cpp")
     except ImportError as error:
@@ -50,10 +60,11 @@ def build_server() -> G1MujocoDdsServer:
         raise
 
 
-def run_with_viewer(server: G1MujocoDdsServer) -> None:
+def run_with_viewer(server: G1MujocoDdsServer, *, prompt_port: int | None = None) -> None:
     stop_event = threading.Event()
     worker_errors: list[BaseException] = []
     viewer = None
+    prompt_receiver = None
     worker = None
     started = False
 
@@ -66,6 +77,11 @@ def run_with_viewer(server: G1MujocoDdsServer) -> None:
             stop_event.set()
 
     try:
+        if prompt_port:
+            try:
+                prompt_receiver = PromptReceiver(prompt_port)
+            except OSError as error:
+                logger.warning("MuJoCo prompt overlay unavailable: %s", error)
         render_data = mujoco.MjData(server.backend.model)  # pyright: ignore[reportAttributeAccessIssue]
         server.backend.copy_data_to(render_data)
         viewer = MujocoViewer(server.backend.model, render_data)
@@ -77,10 +93,16 @@ def run_with_viewer(server: G1MujocoDdsServer) -> None:
         started = True
         frame_period = 1.0 / RENDER_HZ
         frame_deadline = time.monotonic()
+
+        def draw_frame_overlay(scene):
+            if prompt_receiver is not None and (frame := prompt_receiver.latest()) is not None:
+                return draw_prompt(scene, render_data, frame)
+            return None
+
         while viewer.is_running() and not stop_event.is_set():
             server.backend.copy_data_to(render_data)
             viewer.cam.lookat[:] = render_data.qpos[:3]
-            viewer.render()
+            viewer.render(draw_frame_overlay=draw_frame_overlay)
             frame_deadline += frame_period
             stop_event.wait(max(frame_deadline - time.monotonic(), 0.0))
     finally:
@@ -92,6 +114,8 @@ def run_with_viewer(server: G1MujocoDdsServer) -> None:
             server.shutdown()
         if viewer is not None:
             viewer.close()
+        if prompt_receiver is not None:
+            prompt_receiver.close()
 
     if worker_errors:
         raise worker_errors[0]
@@ -103,7 +127,8 @@ def run(argv=None) -> None:
 
     setup_logger()
     try:
-        run_with_viewer(build_server())
+        sim = OmegaConf.load(resolve_repo_path("configs/deployment/sim.yaml"))
+        run_with_viewer(build_server(sim), prompt_port=sim.get("sim_prompt_port"))
     except KeyboardInterrupt:
         return
 

@@ -54,15 +54,26 @@ def run(cfg: DictConfig) -> None:
     setup_logger()
     env = None
     log = None
-    switching = None
+    policy_manager = None
+    prompt_publisher = None
     try:
         dof = compose_dof_config(cfg.robot.dof, cfg.policy.dof)
         controller_cfg = cfg.controller
         if any(cfg.get(name, {}).get("enabled", False) for name in ("track", "metatron")):
-            from g1_playground.policy_handoff import setup_handoff
+            from g1_playground.policy_fsm import setup_policy_fsm
 
-            switching, controller_cfg = setup_handoff(cfg, dof)
-        policy = switching.loco if switching is not None else LeggedLabPolicy(cfg.policy, dof_cfg=dof)
+            if cfg.metatron.enabled and (port := cfg.get("sim_prompt_port")):
+                if __package__:
+                    from .telemetry import PromptPublisher
+                else:
+                    from telemetry import PromptPublisher
+
+                try:
+                    prompt_publisher = PromptPublisher(port)
+                except OSError as error:
+                    logger.warning("MuJoCo prompt publisher unavailable: %s", error)
+            policy_manager, controller_cfg = setup_policy_fsm(cfg, dof, publish_prompt=prompt_publisher)
+        policy = policy_manager.loco if policy_manager is not None else LeggedLabPolicy(cfg.policy, dof_cfg=dof)
         env = instantiate(cfg.env, dof_cfg=dof, control_dt=policy.dt)
         controller = instantiate(controller_cfg, env=env)
         if cfg.recording.enabled:
@@ -77,8 +88,8 @@ def run(cfg: DictConfig) -> None:
         if frame is None:
             return
         state, _ = frame
-        if switching is not None:
-            switching.warmup(state, env.read_odometry())
+        if policy_manager is not None:
+            policy_manager.warmup(state, env.read_odometry())
         initial = state.dof_pos
         standing = policy.standing_target
         env.activate_commands()
@@ -106,14 +117,14 @@ def run(cfg: DictConfig) -> None:
             if frame is None:
                 break
             state, control = frame
-            if switching is None:
+            if policy_manager is None:
                 target = policy.act(state, control)
                 env.step(target)
                 odometry = env.read_odometry()
             else:
                 odometry = env.read_odometry()
                 control.setdefault("buttons", getattr(controller, "pressed_buttons", ()))
-                target = switching.step(env, state, odometry, control, started - origin).target
+                target = policy_manager.step(env, state, odometry, control, started - origin).target
             record(log, started - origin, state, target, odometry)
             remaining = policy.dt - (time.monotonic() - started)
             if remaining > 0:
@@ -130,8 +141,10 @@ def run(cfg: DictConfig) -> None:
             if env is not None:
                 env.shutdown()
         finally:
-            if switching is not None:
-                switching.close()
+            if prompt_publisher is not None:
+                prompt_publisher.close()
+            if policy_manager is not None:
+                policy_manager.close()
             if log is not None:
                 save_recording(log, cfg.recording.directory, OmegaConf.to_yaml(cfg, resolve=True))
 

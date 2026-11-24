@@ -1,5 +1,22 @@
 import glfw
 import mujoco
+import numpy as np
+
+
+def add_geom(scene, kind, rgba, size, pos):
+    if scene.ngeom >= scene.maxgeom:
+        return None
+    geom = scene.geoms[scene.ngeom]
+    mujoco.mjv_initGeom(
+        geom,
+        kind,
+        np.asarray(size, dtype=np.float64),
+        np.asarray(pos, dtype=np.float64),
+        np.eye(3).flatten(),
+        np.asarray(rgba, dtype=np.float32),
+    )
+    scene.ngeom += 1
+    return geom
 
 
 class MujocoViewer:
@@ -22,6 +39,7 @@ class MujocoViewer:
         self._right_pressed = False
         self._middle_pressed = False
         self._last_cursor = (0.0, 0.0)
+        self.show_frame_overlay = True
 
         if not glfw.init():
             raise RuntimeError("Failed to initialize GLFW")
@@ -53,7 +71,7 @@ class MujocoViewer:
     def is_running(self) -> bool:
         return self.window is not None and not glfw.window_should_close(self.window)
 
-    def render(self) -> None:
+    def render(self, *, draw_frame_overlay=None) -> None:
         if not self.is_running():
             return
         glfw.make_context_current(self.window)
@@ -70,7 +88,12 @@ class MujocoViewer:
             mujoco.mjv_makeLights(self.model, self.data, self.scene)
         else:
             mujoco.mjv_updateScene(self.model, self.data, self.option, self.perturb, self.cam, categories, self.scene)
+        overlay = draw_frame_overlay(self.scene) if draw_frame_overlay is not None and self.show_frame_overlay else None
         mujoco.mjr_render(viewport, self.scene, self.context)
+        if overlay is not None:
+            mujoco.mjr_overlay(
+                mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, *overlay, self.context
+            )
         glfw.swap_buffers(self.window)
         glfw.poll_events()
 
@@ -86,6 +109,8 @@ class MujocoViewer:
     def _key_callback(self, window, key, _scancode, action, _mods) -> None:
         if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
             glfw.set_window_should_close(window, True)
+        elif key == glfw.KEY_P and action == glfw.PRESS:
+            self.show_frame_overlay = not self.show_frame_overlay
 
     def _mouse_button_callback(self, window, button, action, _mods) -> None:
         pressed = action == glfw.PRESS

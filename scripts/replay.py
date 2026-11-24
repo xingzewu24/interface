@@ -9,7 +9,7 @@ import mujoco
 import numpy as np
 from omegaconf import OmegaConf
 
-from g1_playground.simulation.mujoco_viewer import MujocoViewer
+from g1_playground.simulation.mujoco_viewer import MujocoViewer, add_geom
 from g1_playground.utils import resolve_repo_path
 from g1_playground.utils.logger import setup_logger
 from g1_playground.utils.math import quat_inv, quat_mul, quat_rotate, yaw_quat
@@ -46,22 +46,6 @@ def draw_world_frame(scene) -> None:
             origin,
             np.asarray(tip, dtype=np.float64),
         )
-
-
-def add_geom(scene, kind, rgba, size, pos):
-    if scene.ngeom >= scene.maxgeom:
-        return None
-    geom = scene.geoms[scene.ngeom]
-    mujoco.mjv_initGeom(  # pyright: ignore[reportAttributeAccessIssue]
-        geom,
-        kind,
-        np.asarray(size, dtype=np.float64),
-        np.asarray(pos, dtype=np.float64),
-        np.eye(3).flatten(),
-        np.asarray(rgba, dtype=np.float32),
-    )
-    scene.ngeom += 1
-    return geom
 
 
 def draw_path(scene, position, active, reserve: int) -> None:
